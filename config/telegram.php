@@ -1,7 +1,7 @@
 <?php
 
 use Telegram\Bot\Commands\HelpCommand;
-
+use App\Telegram\Commands\{StartCommand, VerifyCommand}
 return [
     /*
     |--------------------------------------------------------------------------
@@ -40,8 +40,8 @@ return [
              */
             'allowed_updates' => null,
             'commands' => [
-                App\Telegram\Commands\StartCommand::class,
-                App\Telegram\Commands\VerifyCommand::class,
+                StartCommand::class,
+                VerifyCommand::class,
             ],
             
             'admin_ids' => explode(',', env('TELEGRAM_ADMIN_IDS', '')),
