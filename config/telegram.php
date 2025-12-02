@@ -1,7 +1,7 @@
 <?php
 
 use Telegram\Bot\Commands\HelpCommand;
-use App\Telegram\Commands\{StartCommand, VerifyCommand}
+use App\Telegram\Commands\{StartCommand, VerifyCommand};
 return [
     /*
     |--------------------------------------------------------------------------
