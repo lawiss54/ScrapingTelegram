@@ -4,8 +4,8 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use Telegram\Bot\Laravel\Facades\Telegram;
-use App\Services{TelegramBotService, AdminNotificationService};
-use App\Models{User, VerificationRequest};
+use App\Services\{TelegramBotService, AdminNotificationService};
+use App\Models\{User, VerificationRequest};
 
 
 class TelegramWebhookController extends Controller
