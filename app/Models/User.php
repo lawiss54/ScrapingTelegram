@@ -18,11 +18,11 @@ class User extends Authenticatable
      * @var list<string>
      */
     protected $fillable = [
-        'name',
-        'email',
-        'password',
+      'telegram_id', 
+      'username', 
+      'first_name', 
+      'is_active'
     ];
-
     /**
      * The attributes that should be hidden for serialization.
      *
@@ -41,8 +41,30 @@ class User extends Authenticatable
     protected function casts(): array
     {
         return [
-            'email_verified_at' => 'datetime',
             'password' => 'hashed',
         ];
     }
+    
+    public function subscriptions()
+    {
+        return $this->hasMany(Subscription::class);
+    }
+    
+    public function activeSubscription()
+    {
+        return $this->hasOne(Subscription::class)
+            ->where('is_active', true)
+            ->where('ends_at', '>', now());
+    }
+    
+    public function verificationRequests()
+    {
+        return $this->hasMany(VerificationRequest::class);
+    }
+    
+    public function hasActiveSubscription(): bool
+    {
+        return $this->activeSubscription
+    }
+
 }
