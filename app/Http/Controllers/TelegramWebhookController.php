@@ -20,58 +20,74 @@ class TelegramWebhookController extends Controller
         $adminId = config('telegram.bots.mybot.admin_ids.0');
         
         try {
+            $update = Telegram::getWebhookUpdate();
+            
             // Log 1: استقبال الطلب
             Telegram::sendMessage([
                 'chat_id' => $adminId,
                 'text' => "📥 Webhook received:
-    " . json_encode($request->all(), JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE)
+    Update ID: " . $update->getUpdateId() . "
+    Type: " . $this->getUpdateType($update)
             ]);
-
-            $update = Telegram::getWebhookUpdate();
-        
-            Telegram::commandsHandler(true);
-            
-            // Log 2: بعد معالجة الأوامر
-            Telegram::sendMessage([
-                'chat_id' => $adminId,
-                'text' => "✅ Commands processed
-    Update type: " . ($update->getMessage() ? 'message' : ($update->getCallbackQuery() ? 'callback' : 'other'))
-            ]);
-            
-            // معالجة Callbacks
+    
+            // ✅ معالجة Callbacks أولاً (قبل commandsHandler)
             if ($callbackQuery = $update->getCallbackQuery()) {
                 Telegram::sendMessage([
                     'chat_id' => $adminId,
                     'text' => "🔘 Processing callback: " . $callbackQuery->getData()
                 ]);
+                
                 $this->botService->handleCallback($callbackQuery);
+                
+                return response()->json(['status' => 'ok']);
             }
             
-            // معالجة الرسائل
+            // معالجة الرسائل العادية
             if ($message = $update->getMessage()) {
-                $text = $message->getText() ?? 'no text';
-                Telegram::sendMessage([
-                    'chat_id' => $adminId,
-                    'text' => "💬 Processing message: " . $text
-                ]);
-                $this->handleMessage($message);
+                $text = $message->getText() ?? '';
+                
+                // ✅ إذا كانت رسالة أمر (تبدأ بـ /)
+                if (str_starts_with($text, '/')) {
+                    Telegram::sendMessage([
+                        'chat_id' => $adminId,
+                        'text' => "⚡ Processing command: " . $text
+                    ]);
+                    
+                    Telegram::commandsHandler(true);
+                } 
+                // ✅ إذا كانت رسالة عادية
+                else {
+                    Telegram::sendMessage([
+                        'chat_id' => $adminId,
+                        'text' => "💬 Processing message: " . $text
+                    ]);
+                    
+                    $this->handleMessage($message);
+                }
             }
             
             return response()->json(['status' => 'ok']);
             
         } catch (Exception $e) {
-            // Log الأخطاء
             Telegram::sendMessage([
                 'chat_id' => $adminId,
                 'text' => "❌ Error:
     " . $e->getMessage() . "
     
-    File: " . $e->getFile() . "
-    Line: " . $e->getLine()
+    File: " . basename($e->getFile()) . ":" . $e->getLine()
             ]);
             
-            return response()->json(['status' => 'error', 'message' => $e->getMessage()], 500);
+            return response()->json(['status' => 'error'], 500);
         }
+    }
+    
+    // Helper function
+    private function getUpdateType($update): string
+    {
+        if ($update->getMessage()) return 'message';
+        if ($update->getCallbackQuery()) return 'callback';
+        if ($update->getEditedMessage()) return 'edited_message';
+        return 'unknown';
     }
     
     protected function handleMessage($message)
