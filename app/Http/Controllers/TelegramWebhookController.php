@@ -15,7 +15,7 @@ class TelegramWebhookController extends Controller
         protected AdminNotificationService $adminService
     ) {}
     
-    public function handle()
+    public function handle(Request $request)
     {
         $update = Telegram::commandsHandler(true);
         
