@@ -19,9 +19,6 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->trimStrings(except: [
             'api/*',
         ]);
-        $middleware->csrfCookie(except: [
-            'api/*',
-        ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         //
