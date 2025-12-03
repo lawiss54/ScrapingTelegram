@@ -26,8 +26,10 @@ class TelegramWebhookController extends Controller
                 'text' => "📥 Webhook received:
     " . json_encode($request->all(), JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE)
             ]);
-            
-            $update = Telegram::commandsHandler(true);
+
+            $update = Telegram::getWebhookUpdate();
+        
+            Telegram::commandsHandler(true);
             
             // Log 2: بعد معالجة الأوامر
             Telegram::sendMessage([
