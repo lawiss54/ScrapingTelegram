@@ -8,10 +8,10 @@ use App\Models\User;
 class StatusCommand extends Command
 {
     // اسم الأمر لي يكتبو اليوزر في التلغرام: /status
-    protected $name = 'status';
+    protected string $name = 'status';
 
     // الوصف تاع الأمر (يظهر في /help)
-    protected $description = 'عرض حالة الاشتراك';
+    protected string $description = 'عرض حالة الاشتراك';
 
     public function handle()
     {
