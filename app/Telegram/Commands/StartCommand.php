@@ -29,10 +29,7 @@ class StartCommand extends Command
                 return;
             }
             
-            $this->sendLog($adminId, "📨 Message received: " . json_encode([
-                'message_id' => $message->getMessageId(),
-                'chat_id' => $message->getChat()->getId(),
-            ]));
+            $this->sendLog($adminId, "📨 Message received");
             
             $telegramUser = $message->getFrom();
             
@@ -45,24 +42,66 @@ class StartCommand extends Command
                 return;
             }
             
-            $this->sendLog($adminId, "👤 User data:
-              ID: {$telegramUser->getId()}
-              Username: " . ($telegramUser->getUsername() ?? 'null') . "
-              Name: " . ($telegramUser->getFirstName() ?? 'null'));
+            $telegramId = $telegramUser->getId();
+            $username = $telegramUser->getUsername();
+            $firstName = $telegramUser->getFirstName() ?? 'مستخدم';
+            $lastName = $telegramUser->getLastName();
+            
+            $this->sendLog($adminId, "👤 User data extracted:
+ID: {$telegramId}
+Username: " . ($username ?? 'null') . "
+FirstName: {$firstName}");
             
             // إنشاء أو تحديث المستخدم
             $this->sendLog($adminId, "💾 Attempting to create/update user...");
             
+            // ✅ التحقق من الاتصال بقاعدة البيانات
+            try {
+                \DB::connection()->getPdo();
+                $this->sendLog($adminId, "✅ Database connection OK");
+            } catch (\Exception $e) {
+                $this->sendLog($adminId, "❌ Database connection FAILED: " . $e->getMessage());
+                throw $e;
+            }
+            
+            // ✅ التحقق من وجود المستخدم أولاً
+            $this->sendLog($adminId, "🔍 Searching for existing user with telegram_id: {$telegramId}");
+            
+            $existingUser = User::where('telegram_id', $telegramId)->first();
+            
+            if ($existingUser) {
+                $this->sendLog($adminId, "📌 User found in DB (ID: {$existingUser->id})");
+            } else {
+                $this->sendLog($adminId, "📌 User NOT found, will create new");
+            }
+            
+            // ✅ البيانات التي سيتم حفظها
+            $userData = [
+                'username' => $username,
+                'first_name' => $firstName,
+                'last_name' => $lastName,
+                'is_active' => true,
+            ];
+            
+            $this->sendLog($adminId, "📝 Data to save: " . json_encode($userData, JSON_UNESCAPED_UNICODE));
+            
+            // ✅ محاولة الحفظ
+            $this->sendLog($adminId, "💾 Executing updateOrCreate...");
+            
             $user = User::updateOrCreate(
-                ['telegram_id' => $telegramUser->getId()],
-                [
-                    'username' => $telegramUser->getUsername(),
-                    'first_name' => $telegramUser->getFirstName() ?? 'مستخدم',
-                    'is_active' => true,
-                ]
+                ['telegram_id' => $telegramId],
+                $userData
             );
             
-            $this->sendLog($adminId, "✅ User saved:
+            $this->sendLog($adminId, "✅ updateOrCreate completed");
+            
+            // ✅ التحقق من نجاح الحفظ
+            if (!$user) {
+                $this->sendLog($adminId, "❌ User object is NULL after save!");
+                throw new \Exception("Failed to create/update user");
+            }
+            
+            $this->sendLog($adminId, "✅ User saved successfully:
 DB ID: {$user->id}
 Telegram ID: {$user->telegram_id}
 Name: {$user->first_name}
@@ -90,9 +129,31 @@ Price: " . ($subscription->price ?? 'null'));
             
             $this->sendLog($adminId, "✅ START COMMAND COMPLETED");
             
+        } catch (\Illuminate\Database\QueryException $e) {
+            // ❌ خطأ في قاعدة البيانات
+            $errorLog = "❌ DATABASE ERROR:
+
+Message: {$e->getMessage()}
+SQL: " . ($e->getSql() ?? 'N/A') . "
+Bindings: " . json_encode($e->getBindings() ?? []) . "
+
+File: {$e->getFile()}
+Line: {$e->getLine()}";
+            
+            $this->sendLog($adminId, $errorLog);
+            
+            \Log::error('StartCommand Database Error', [
+                'message' => $e->getMessage(),
+                'sql' => $e->getSql(),
+            ]);
+            
+            $this->replyWithMessage([
+                'text' => '❌ خطأ في قاعدة البيانات. يرجى المحاولة مرة أخرى لاحقاً.'
+            ]);
+            
         } catch (\Exception $e) {
-            // ❌ Log الأخطاء التفصيلي
-            $errorLog = "❌ ERROR IN START COMMAND:
+            // ❌ أخطاء عامة
+            $errorLog = "❌ GENERAL ERROR:
 
 Message: {$e->getMessage()}
 
@@ -100,7 +161,7 @@ File: {$e->getFile()}
 Line: {$e->getLine()}
 
 Trace:
-" . substr($e->getTraceAsString(), 0, 500);
+" . substr($e->getTraceAsString(), 0, 800);
             
             $this->sendLog($adminId, $errorLog);
             
@@ -108,6 +169,7 @@ Trace:
                 'message' => $e->getMessage(),
                 'file' => $e->getFile(),
                 'line' => $e->getLine(),
+                'trace' => $e->getTraceAsString(),
             ]);
             
             $this->replyWithMessage([
@@ -173,7 +235,6 @@ Trace:
             return;
         }
         
-        // ✅ حساب الأيام المتبقية بشكل صحيح
         $daysLeft = 0;
         if ($subscription->ends_at) {
             $daysLeft = now()->diffInDays($subscription->ends_at, false);
@@ -239,11 +300,14 @@ Trace:
         try {
             Telegram::sendMessage([
                 'chat_id' => $adminId,
-                'text' => "🔍 [StartCommand]\n\n" . $message,
+                'text' => "🔍 [StartCommand] " . date('H:i:s') . "\n\n" . $message,
                 'parse_mode' => 'HTML'
             ]);
+            
+            // تأخير بسيط لتجنب rate limiting
+            usleep(100000); // 0.1 ثانية
+            
         } catch (\Exception $e) {
-            // تجنب حلقة لا نهائية من الأخطاء
             \Log::error('Failed to send log: ' . $e->getMessage());
         }
     }
