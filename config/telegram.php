@@ -1,7 +1,7 @@
 <?php
 
 use Telegram\Bot\Commands\HelpCommand;
-use App\Telegram\Commands\{StartCommand, VerifyCommand};
+use App\Telegram\Commands\{StartCommand, VerifyCommand, StatusCommand};
 return [
     /*
     |--------------------------------------------------------------------------
@@ -42,6 +42,7 @@ return [
             'commands' => [
                 StartCommand::class,
                 VerifyCommand::class,
+                StatusCommand::class,
             ],
             
             'admin_ids' => explode(',', env('TELEGRAM_ADMIN_IDS', '')),

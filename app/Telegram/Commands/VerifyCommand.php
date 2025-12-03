@@ -24,6 +24,6 @@ class VerifyCommand extends Command
             'text' => "📸 أرسل صورة إيصال الدفع أو رقم العملية"
         ]);
         
-        cache()->put("waiting_payment_{$chatId}", true, now()->addMinutes(30));
+        cache()->put("waiting_payment_{$chatId}", true, now()->addMinutes(320));
     }
 }

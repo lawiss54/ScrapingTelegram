@@ -118,6 +118,8 @@ class TelegramBotService
         $planType = str_replace('select_plan_', '', $data);
 
         $plans = [
+            
+            'monthly' => ['duration' => 1, 'price' => 0, 'name' => 'تجريبي'],
             'monthly' => ['duration' => 30, 'price' => 10, 'name' => 'شهري'],
             'quarterly' => ['duration' => 90, 'price' => 25, 'name' => 'ربع سنوي'],
             'semi_annual' => ['duration' => 180, 'price' => 45, 'name' => 'نصف سنوي'],
