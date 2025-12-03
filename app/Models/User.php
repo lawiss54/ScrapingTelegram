@@ -36,6 +36,10 @@ class User extends Authenticatable
      *
      * @return array<string, string>
      */
+    protected $casts = [
+        'telegram_id' => 'integer',
+        'is_active' => 'boolean',
+    ];
     
     
     public function subscriptions()
