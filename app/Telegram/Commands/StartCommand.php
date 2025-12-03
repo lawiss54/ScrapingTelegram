@@ -8,8 +8,8 @@ use App\Models\User;
 
 class StartCommand extends Command
 {
-    protected $name = 'start';
-    protected $description = 'بدء استخدام البوت';
+    protected string $name = 'start';
+    protected string $description = 'بدء استخدام البوت';
 
     public function handle()
     {
