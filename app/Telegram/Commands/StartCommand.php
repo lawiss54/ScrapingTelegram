@@ -58,7 +58,6 @@ Name: " . ($telegramUser->getFirstName() ?? 'null'));
                 [
                     'username' => $telegramUser->getUsername(),
                     'first_name' => $telegramUser->getFirstName() ?? 'مستخدم',
-                    'last_name' => $telegramUser->getLastName(),
                     'is_active' => true,
                 ]
             );
