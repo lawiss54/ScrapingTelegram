@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
+
 class User extends Authenticatable
 {
     /** @use HasFactory<\Database\Factories\UserFactory> */
@@ -21,7 +22,7 @@ class User extends Authenticatable
       'telegram_id', 
       'username', 
       'first_name', 
-      'is_active'
+      'is_active',
     ];
     /**
      * The attributes that should be hidden for serialization.

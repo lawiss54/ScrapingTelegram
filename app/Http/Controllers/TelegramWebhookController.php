@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Telegram\Bot\Laravel\Facades\Telegram;
 use App\Services\{TelegramBotService, AdminNotificationService};
 use App\Models\{User, VerificationRequest};
@@ -21,12 +22,28 @@ class TelegramWebhookController extends Controller
         
         try {
             $update = Telegram::getWebhookUpdate();
+            $updateId = $update->getUpdateId();
+            
+            // ✅ تحقق من آخر update_id معالج
+            $lastProcessedId = Cache::get('last_telegram_update_id', 0);
+            
+            if ($updateId <= $lastProcessedId) {
+                Telegram::sendMessage([
+                    'chat_id' => $adminId,
+                    'text' => "⏭️ Skipped duplicate update: $updateId (Last: $lastProcessedId)"
+                ]);
+                
+                return response()->json(['status' => 'duplicate']);
+            }
+            
+            // ✅ حفظ الـ update_id الحالي
+            Cache::forever('last_telegram_update_id', $updateId);
             
             // Log 1: استقبال الطلب
             Telegram::sendMessage([
                 'chat_id' => $adminId,
                 'text' => "📥 Webhook received:
-    Update ID: " . $update->getUpdateId() . "
+    Update ID: " . $updateId . "
     Type: " . $this->getUpdateType($update)
             ]);
     
