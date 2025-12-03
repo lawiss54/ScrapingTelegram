@@ -46,9 +46,9 @@ class StartCommand extends Command
             }
             
             $this->sendLog($adminId, "👤 User data:
-ID: {$telegramUser->getId()}
-Username: " . ($telegramUser->getUsername() ?? 'null') . "
-Name: " . ($telegramUser->getFirstName() ?? 'null'));
+              ID: {$telegramUser->getId()}
+              Username: " . ($telegramUser->getUsername() ?? 'null') . "
+              Name: " . ($telegramUser->getFirstName() ?? 'null'));
             
             // إنشاء أو تحديث المستخدم
             $this->sendLog($adminId, "💾 Attempting to create/update user...");
