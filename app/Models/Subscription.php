@@ -15,4 +15,6 @@ class Subscription extends Model
       'is_active',
       'status',
     ]; 
+    
+    
 }

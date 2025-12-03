@@ -60,10 +60,13 @@ class StartCommand extends Command
             ]);
             
             // عرض القائمة المناسبة
+           
             if ($user->hasActiveSubscription()) {
-                $this->menuService->showMainMenu($this, $user);
+                $this->logger->info("📋 Showing MAIN MENU");
+                $this->menuService->showMainMenu($user);  // ✅ بدون $this
             } else {
-                $this->menuService->showWelcomeMessage($this, $user);
+                $this->logger->info("🎁 Showing WELCOME MESSAGE");
+                $this->menuService->showWelcomeMessage($user);  // ✅ بدون $this
             }
             
             $this->logger->success("START COMMAND COMPLETED");

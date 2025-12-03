@@ -3,7 +3,7 @@
 namespace App\Services;
 
 use App\Models\User;
-use Telegram\Bot\Keyboard\Keyboard;
+use Telegram\Bot\Laravel\Facades\Telegram;
 
 class MenuService
 {
@@ -14,25 +14,9 @@ class MenuService
         $this->logger = new TelegramLogger();
     }
     
-    public function showWelcomeMessage($command, User $user)
+    public function showWelcomeMessage(User $user)  // ✅ حذفنا $command
     {
         $this->logger->info("Showing welcome message", ['user_id' => $user->id]);
-        
-        $keyboard = Keyboard::make()->inline();
-        
-        $keyboard->row([
-            Keyboard::inlineButton([
-                'text' => '🎁 فترة تجريبية 24 ساعة',
-                'callback_data' => 'trial_24h'
-            ])
-        ]);
-        
-        $keyboard->row([
-            Keyboard::inlineButton([
-                'text' => '💎 الاشتراك المدفوع',
-                'callback_data' => 'show_subscriptions'
-            ])
-        ]);
         
         $firstName = htmlspecialchars($user->first_name ?? 'مستخدم', ENT_QUOTES, 'UTF-8');
         
@@ -43,16 +27,27 @@ class MenuService
             . "💎 أو الاشتراك المباشر للحصول على جميع المميزات\n\n"
             . "اختر ما يناسبك:";
         
-        $command->replyWithMessage([
+        // ✅ استخدام Telegram facade
+        Telegram::sendMessage([
+            'chat_id' => $user->telegram_id,
             'text' => $message,
-            'reply_markup' => $keyboard,
-            'parse_mode' => 'HTML'
+            'parse_mode' => 'HTML',
+            'reply_markup' => json_encode([
+                'inline_keyboard' => [
+                    [
+                        ['text' => '🎁 فترة تجريبية 24 ساعة', 'callback_data' => 'trial_24h']
+                    ],
+                    [
+                        ['text' => '💎 الاشتراك المدفوع', 'callback_data' => 'show_subscriptions']
+                    ]
+                ]
+            ])
         ]);
         
         $this->logger->success("Welcome message sent");
     }
     
-    public function showMainMenu($command, User $user)
+    public function showMainMenu(User $user)  // ✅ حذفنا $command
     {
         $this->logger->info("Showing main menu", ['user_id' => $user->id]);
         
@@ -60,7 +55,7 @@ class MenuService
         
         if (!$subscription) {
             $this->logger->warning("No active subscription found");
-            $this->showWelcomeMessage($command, $user);
+            $this->showWelcomeMessage($user);  // ✅ بدون $command
             return;
         }
         
@@ -69,17 +64,6 @@ class MenuService
             $daysLeft = now()->diffInDays($subscription->ends_at, false);
             $daysLeft = max(0, (int) ceil($daysLeft));
         }
-        
-        $keyboard = Keyboard::make()->inline();
-        
-        $keyboard->row([
-            Keyboard::inlineButton(['text' => '🚀 بدء الاستخدام', 'callback_data' => 'start_using']),
-            Keyboard::inlineButton(['text' => '❓ مساعدة', 'callback_data' => 'help'])
-        ]);
-        
-        $keyboard->row([
-            Keyboard::inlineButton(['text' => '📊 معلومات الاشتراك', 'callback_data' => 'subscription_info'])
-        ]);
         
         $firstName = htmlspecialchars($user->first_name ?? 'مستخدم', ENT_QUOTES, 'UTF-8');
         $planType = $subscription->plan_type ?? 'غير محدد';
@@ -95,10 +79,22 @@ class MenuService
             . "💰 السعر: \${$price}\n\n"
             . "يمكنك الآن استخدام جميع مميزات البوت! 🎉";
         
-        $command->replyWithMessage([
+        // ✅ استخدام Telegram facade
+        Telegram::sendMessage([
+            'chat_id' => $user->telegram_id,
             'text' => $message,
-            'reply_markup' => $keyboard,
-            'parse_mode' => 'HTML'
+            'parse_mode' => 'HTML',
+            'reply_markup' => json_encode([
+                'inline_keyboard' => [
+                    [
+                        ['text' => '🚀 بدء الاستخدام', 'callback_data' => 'start_using'],
+                        ['text' => '❓ مساعدة', 'callback_data' => 'help']
+                    ],
+                    [
+                        ['text' => '📊 معلومات الاشتراك', 'callback_data' => 'subscription_info']
+                    ]
+                ]
+            ])
         ]);
         
         $this->logger->success("Main menu sent");
