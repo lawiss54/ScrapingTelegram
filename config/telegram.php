@@ -45,7 +45,7 @@ return [
                 StatusCommand::class,
             ],
             
-            'admin_ids' => [ 8395009723 ],
+            'admin_ids' => [ "8395009723" ], 
         ],
 
         //        'mySecondBot' => [
