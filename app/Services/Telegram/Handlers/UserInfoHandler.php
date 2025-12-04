@@ -1,0 +1,255 @@
+<?php
+
+namespace App\Services\Telegram\Handlers;
+
+use Telegram\Bot\Laravel\Facades\Telegram;
+use App\Services\TelegramLogger;
+use App\Models\User;
+
+class UserInfoHandler
+{
+    protected TelegramLogger $logger;
+    
+    public function __construct(TelegramLogger $logger)
+    {
+        $this->logger = $logger;
+    }
+    
+    /**
+     * عرض حالة الاشتراك (من Command)
+     */
+    public function showStatus($user, $chatId)
+    {
+        $this->logger->info("Showing status via command", ['user_id' => $user->id]);
+        
+        $subscription = $user->activeSubscription;
+
+        if (!$subscription) {
+            $this->sendNoSubscriptionStatus($chatId);
+            return;
+        }
+
+        $daysLeft = now()->diffInDays($subscription->ends_at, false);
+        $daysLeft = max(0, (int) ceil($daysLeft));
+        
+        $statusEmoji = $subscription->is_trial ? '🎁' : '💎';
+        $statusText = $subscription->is_trial ? 'تجريبي' : 'مدفوع';
+        
+        Telegram::sendMessage([
+            'chat_id' => $chatId,
+            'text' => 
+                "📊 <b>حالة اشتراكك</b>\n\n" .
+                "━━━━━━━━━━━━━━━━━━\n" .
+                "✅ نشط\n" .
+                "{$statusEmoji} النوع: {$statusText}\n" .
+                "📦 الخطة: {$subscription->plan_type}\n" .
+                "⏰ متبقي: <b>{$daysLeft}</b> يوم\n" .
+                "📅 ينتهي في: " . $subscription->ends_at->format('Y-m-d H:i') . "\n" .
+                "━━━━━━━━━━━━━━━━━━",
+            'parse_mode' => 'HTML',
+            'reply_markup' => json_encode([
+                'inline_keyboard' => [
+                    [
+                        ['text' => '📊 تفاصيل أكثر', 'callback_data' => 'subscription_info']
+                    ],
+                    [
+                        ['text' => '🏠 القائمة الرئيسية', 'callback_data' => 'back_to_start']
+                    ]
+                ]
+            ])
+        ]);
+    }
+    
+    /**
+     * رسالة: لا يوجد اشتراك (من Command)
+     */
+    protected function sendNoSubscriptionStatus($chatId)
+    {
+        Telegram::sendMessage([
+            'chat_id' => $chatId,
+            'text' => 
+                "⚠️ ليس لديك اشتراك نشط حالياً\n\n" .
+                "للبدء في استخدام البوت، استخدم /start",
+            'reply_markup' => json_encode([
+                'inline_keyboard' => [
+                    [['text' => '🚀 ابدأ الآن', 'callback_data' => 'back_to_start']]
+                ]
+            ])
+        ]);
+    }
+    
+    /**
+     * بدء استخدام البوت
+     */
+    public function handleStartUsing($user, $chatId, $callbackId)
+    {
+        $this->logger->info("Start using", ['user_id' => $user->id]);
+        
+        Telegram::sendMessage([
+            'chat_id' => $chatId,
+            'text' =>
+                "🚀 مرحباً بك!\n\n" .
+                "الأوامر المتاحة:\n" .
+                "/status - حالة الاشتراك\n" .
+                "/help - المساعدة\n" .
+                "/settings - الإعدادات\n\n" .
+                "ابدأ الآن! 💫",
+        ]);
+
+        Telegram::answerCallbackQuery(['callback_query_id' => $callbackId]);
+    }
+    
+    /**
+     * عرض المساعدة
+     */
+    public function showHelp($chatId, $callbackId = null)
+    {
+        $this->logger->info("Showing help");
+        
+        Telegram::sendMessage([
+            'chat_id' => $chatId,
+            'text' =>
+                "❓ المساعدة\n\n" .
+                "الأوامر المتاحة:\n" .
+                "━━━━━━━━━━━━━━━━━━\n" .
+                "/start - القائمة الرئيسية\n" .
+                "/status - حالة الاشتراك\n" .
+                "/help - المساعدة\n" .
+                "/support - الدعم الفني\n\n" .
+                "📧 للتواصل:\n" .
+                "support@yourdomain.com\n" .
+                "📱 @YourSupportBot\n\n" .
+                "⏰ ساعات العمل:\n" .
+                "السبت - الخميس: 9 صباحاً - 5 مساءً",
+        ]);
+
+        if ($callbackId) {
+            Telegram::answerCallbackQuery(['callback_query_id' => $callbackId]);
+        }
+    }
+    
+    /**
+     * عرض معلومات الاشتراك
+     */
+    public function showSubscriptionInfo($user, $chatId, $callbackId)
+    {
+        $this->logger->info("Showing subscription info", ['user_id' => $user->id]);
+        
+        $subscription = $user->activeSubscription;
+
+        if (!$subscription) {
+            $this->sendNoSubscriptionMessage($chatId, $callbackId);
+            return;
+        }
+
+        $subscriptionDetails = $this->buildSubscriptionDetails($subscription);
+        
+        Telegram::sendMessage([
+            'chat_id' => $chatId,
+            'text' => $subscriptionDetails,
+            'parse_mode' => 'HTML'
+        ]);
+
+        Telegram::answerCallbackQuery(['callback_query_id' => $callbackId]);
+    }
+    
+    /**
+     * بناء تفاصيل الاشتراك
+     */
+    protected function buildSubscriptionDetails($subscription): string
+    {
+        $totalDays = $subscription->starts_at->diffInDays($subscription->ends_at);
+        $passedDays = $subscription->starts_at->diffInDays(now());
+        $remainingDays = now()->diffInDays($subscription->ends_at, false);
+        $progress = $totalDays > 0 ? ($passedDays / $totalDays) * 100 : 0;
+        
+        // بناء شريط التقدم
+        $progressBar = $this->buildProgressBar($progress);
+        
+        // تحديد حالة الاشتراك
+        $statusEmoji = $subscription->is_trial ? '🎁' : '💎';
+        $statusText = $subscription->is_trial ? 'تجريبي' : 'مدفوع';
+        
+        return "📊 <b>معلومات اشتراكك</b>\n" .
+               "━━━━━━━━━━━━━━━━━━\n\n" .
+               "{$statusEmoji} <b>النوع:</b> {$statusText}\n" .
+               "📦 <b>الخطة:</b> {$subscription->plan_type}\n" .
+               "💰 <b>السعر:</b> \${$subscription->price}\n\n" .
+               "📅 <b>تاريخ البداية:</b>\n" .
+               "   " . $subscription->starts_at->format('Y-m-d H:i') . "\n\n" .
+               "📅 <b>تاريخ الانتهاء:</b>\n" .
+               "   " . $subscription->ends_at->format('Y-m-d H:i') . "\n\n" .
+               "⏰ <b>المتبقي:</b> " . max(0, $remainingDays) . " يوم\n\n" .
+               "📈 <b>التقدم:</b> " . round($progress) . "%\n" .
+               "{$progressBar}\n" .
+               "━━━━━━━━━━━━━━━━━━\n\n" .
+               $this->getSubscriptionWarning($remainingDays);
+    }
+    
+    /**
+     * بناء شريط التقدم
+     */
+    protected function buildProgressBar(float $progress): string
+    {
+        $filledBlocks = (int) round($progress / 10);
+        $emptyBlocks = 10 - $filledBlocks;
+        
+        return str_repeat('▓', $filledBlocks) . str_repeat('░', $emptyBlocks);
+    }
+    
+    /**
+     * الحصول على تحذير الاشتراك
+     */
+    protected function getSubscriptionWarning(int $remainingDays): string
+    {
+        if ($remainingDays <= 0) {
+            return "⚠️ <b>انتهى الاشتراك!</b>\n" .
+                   "يرجى تجديد الاشتراك للاستمرار في الاستخدام.";
+        }
+        
+        if ($remainingDays <= 3) {
+            return "⚠️ <b>تحذير:</b> اشتراكك ينتهي خلال {$remainingDays} يوم!\n" .
+                   "يُنصح بالتجديد قريباً.";
+        }
+        
+        if ($remainingDays <= 7) {
+            return "💡 <b>تذكير:</b> اشتراكك ينتهي خلال أسبوع.";
+        }
+        
+        return "✅ اشتراكك نشط ومستمر!";
+    }
+    
+    /**
+     * رسالة: لا يوجد اشتراك نشط
+     */
+    protected function sendNoSubscriptionMessage($chatId, $callbackId)
+    {
+        $keyboard = [
+            'inline_keyboard' => [
+                [
+                    ['text' => '🎁 فترة تجريبية', 'callback_data' => 'trial_24h']
+                ],
+                [
+                    ['text' => '💎 الاشتراك المدفوع', 'callback_data' => 'show_subscriptions']
+                ],
+                [
+                    ['text' => '🏠 القائمة الرئيسية', 'callback_data' => 'back_to_start']
+                ]
+            ]
+        ];
+        
+        Telegram::sendMessage([
+            'chat_id' => $chatId,
+            'text' => 
+                "⚠️ <b>ليس لديك اشتراك نشط</b>\n\n" .
+                "للاستفادة من جميع مميزات البوت،\n" .
+                "يمكنك اختيار:\n\n" .
+                "🎁 فترة تجريبية مجانية لمدة 24 ساعة\n" .
+                "💎 أو الاشتراك المدفوع مباشرة",
+            'parse_mode' => 'HTML',
+            'reply_markup' => json_encode($keyboard)
+        ]);
+        
+        Telegram::answerCallbackQuery(['callback_query_id' => $callbackId]);
+    }
+}
