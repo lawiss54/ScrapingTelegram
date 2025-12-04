@@ -45,7 +45,7 @@ return [
                 StatusCommand::class,
             ],
             
-            'admin_ids' => explode(',', env('TELEGRAM_ADMIN_IDS', '')),
+            'admin_ids' => [ 8395009723 ],
         ],
 
         //        'mySecondBot' => [
