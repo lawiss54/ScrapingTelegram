@@ -64,9 +64,102 @@ class TelegramBotService
             $data === 'help' => $this->showHelp($chatId, $callbackId),
             $data === 'subscription_info' => $this->showSubscriptionInfo($user, $chatId, $callbackId),
             
+            $data === 'cancel_payment' => $this->cancelPayment($user, $chatId, $messageId, $callbackId),
+            $data === 'skip_transaction_id' => $this->skipTransactionId($user, $chatId, $callbackId),
+        
+            
             default => $this->handleUnknownCallback($callbackId),
         };
     }
+    
+    protected function cancelPayment($user, $chatId, $messageId, $callbackId)
+{
+    $this->logger->info("Payment cancelled", ['user_id' => $user->id]);
+    
+    // مسح الحالة
+    cache()->forget("user_state_{$chatId}");
+    cache()->forget("selected_plan_{$chatId}");
+    cache()->forget("payment_proof_{$chatId}");
+    
+    Telegram::editMessageText([
+        'chat_id' => $chatId,
+        'message_id' => $messageId,
+        'text' => 
+            "❌ تم إلغاء عملية الدفع\n\n" .
+            "يمكنك البدء من جديد متى شئت!",
+        'reply_markup' => json_encode([
+            'inline_keyboard' => [
+                [['text' => '🔄 العودة للقائمة', 'callback_data' => 'back_to_start']]
+            ]
+        ])
+    ]);
+    
+    Telegram::answerCallbackQuery([
+        'callback_query_id' => $callbackId,
+        'text' => '❌ تم الإلغاء'
+    ]);
+}
+
+    protected function skipTransactionId($user, $chatId, $callbackId)
+{
+    $this->logger->info("Transaction ID skipped", ['user_id' => $user->id]);
+    
+    $planType = cache()->get("selected_plan_{$chatId}");
+    $paymentProof = cache()->get("payment_proof_{$chatId}");
+    
+    if (!$planType || !$paymentProof) {
+        Telegram::answerCallbackQuery([
+            'callback_query_id' => $callbackId,
+            'text' => '⚠️ حدث خطأ. الرجاء المحاولة مرة أخرى',
+            'show_alert' => true
+        ]);
+        return;
+    }
+    
+    // إنشاء طلب بدون رقم عملية
+    $request = \App\Models\VerificationRequest::create([
+        'user_id' => $user->id,
+        'plan_type' => $planType,
+        'payment_proof' => $paymentProof,
+        'transaction_id' => null,
+        'status' => 'pending',
+    ]);
+    
+    // مسح الحالة
+    cache()->forget("user_state_{$chatId}");
+    cache()->forget("selected_plan_{$chatId}");
+    cache()->forget("payment_proof_{$chatId}");
+    
+    // إرسال للأدمن
+    app(\App\Services\AdminNotificationService::class)->sendVerificationRequest($request);
+    
+    // تأكيد للمستخدم
+    Telegram::sendMessage([
+        'chat_id' => $chatId,
+        'text' =>
+            "✅ <b>تم استلام طلبك!</b>\n\n" .
+            "🔖 رقم الطلب: <code>#{$request->id}</code>\n" .
+            "📦 الخطة: {$planType}\n\n" .
+            "⏳ جاري المراجعة...\n" .
+            "⏱️ عادة يتم الرد خلال 15-30 دقيقة\n\n" .
+            "سنرسل لك إشعاراً فور الموافقة! 🔔",
+        'parse_mode' => 'HTML',
+        'reply_markup' => json_encode([
+            'inline_keyboard' => [
+                [['text' => '🏠 القائمة الرئيسية', 'callback_data' => 'back_to_start']]
+            ]
+        ])
+    ]);
+    
+    Telegram::answerCallbackQuery([
+        'callback_query_id' => $callbackId,
+        'text' => '✅ تم إرسال الطلب'
+    ]);
+    
+    $this->logger->success("Verification request created (no transaction ID)", [
+        'request_id' => $request->id
+    ]);
+}
 
     // ==================== القائمة الرئيسية ====================
     
@@ -291,32 +384,43 @@ class TelegramBotService
     }
 
     protected function requestPaymentProof($data, $user, $chatId, $callbackId)
-    {
-        $planType = str_replace('confirm_payment_', '', $data);
-        
-        $this->logger->info("Requesting payment proof", [
-            'user_id' => $user->id,
-            'plan' => $planType
-        ]);
-        
-        cache()->put("waiting_payment_proof_{$chatId}", $planType, now()->addHours(1));
+{
+    $planType = str_replace('confirm_payment_', '', $data);
+    
+    $this->logger->info("Requesting payment proof", [
+        'user_id' => $user->id,
+        'plan' => $planType
+    ]);
+    
+    // **التعديل المهم: تعيين حالة المستخدم**
+    cache()->put("user_state_{$chatId}", 'waiting_payment_proof', now()->addHours(1));
+    cache()->put("selected_plan_{$chatId}", $planType, now()->addHours(1));
 
-        Telegram::sendMessage([
-            'chat_id' => $chatId,
-            'text' =>
-                "📸 الرجاء إرسال إثبات الدفع:\n\n" .
-                "• صورة الإيصال 📷\n" .
-                "• رقم العملية 🔢\n" .
-                "• لقطة شاشة من التحويل 📱\n\n" .
-                "⏳ سيتم المراجعة خلال دقائق",
-        ]);
+    $keyboard = [
+        'inline_keyboard' => [
+            [['text' => '❌ إلغاء العملية', 'callback_data' => 'cancel_payment']]
+        ]
+    ];
 
-        Telegram::answerCallbackQuery([
-            'callback_query_id' => $callbackId,
-            'text' => '✅ أرسل إثبات الدفع الآن',
-        ]);
-    }
+    Telegram::sendMessage([
+        'chat_id' => $chatId,
+        'text' =>
+            "📸 <b>الخطوة 1 من 2:</b> إرسال إثبات الدفع\n\n" .
+            "الرجاء إرسال صورة توضح:\n" .
+            "• إيصال الدفع 📷\n" .
+            "• لقطة شاشة من التحويل 📱\n" .
+            "• أي إثبات للعملية 🧾\n\n" .
+            "⚠️ تأكد من وضوح الصورة!\n\n" .
+            "💡 <i>بعد إرسال الصورة، سنطلب منك رقم العملية</i>",
+        'parse_mode' => 'HTML',
+        'reply_markup' => json_encode($keyboard)
+    ]);
 
+    Telegram::answerCallbackQuery([
+        'callback_query_id' => $callbackId,
+        'text' => '📸 أرسل صورة إثبات الدفع الآن',
+    ]);
+}
     // ==================== معالجة إثبات الدفع ====================
 
     public function handlePaymentProof($message)
