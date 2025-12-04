@@ -135,6 +135,7 @@ class TelegramBotService
         $user = User::where('telegram_id', $chatId)->first();
         
         if (!$user) {
+            $this->logger->warning("User not found in handleMessage", ['chat_id' => $chatId]);
             return;
         }
         
@@ -143,20 +144,33 @@ class TelegramBotService
         
         $this->logger->info("Processing message", [
             'user_id' => $user->id,
-            'state' => $userState,
-            'has_photo' => $message->has('photo'),
-            'has_text' => $message->has('text')
+            'chat_id' => $chatId,
+            'state' => $userState ?? 'null',
+            'has_photo' => $message->getPhoto() ? 'yes' : 'no',
+            'has_text' => $message->getText() ? 'yes' : 'no'
         ]);
         
         // معالجة حسب الحالة
         switch ($userState) {
             case 'waiting_payment_proof':
+                $this->logger->info("Routing to PaymentHandler (waiting_payment_proof)", [
+                    'user_id' => $user->id
+                ]);
+                $this->paymentHandler->handlePaymentProof($message, $user);
+                break;
+                
             case 'waiting_transaction_id':
-                // تحويل لـ PaymentHandler
+                $this->logger->info("Routing to PaymentHandler (waiting_transaction_id)", [
+                    'user_id' => $user->id
+                ]);
                 $this->paymentHandler->handlePaymentProof($message, $user);
                 break;
                 
             default:
+                $this->logger->info("Routing to normal message handler", [
+                    'user_id' => $user->id,
+                    'state' => $userState ?? 'null'
+                ]);
                 // معالجة الرسائل العادية (أوامر)
                 $this->handleNormalMessage($message, $user, $chatId);
         }
