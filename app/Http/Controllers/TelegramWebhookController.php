@@ -28,10 +28,6 @@ class TelegramWebhookController extends Controller
             $lastProcessedId = Cache::get('last_telegram_update_id', 0);
             
             if ($updateId <= $lastProcessedId) {
-                Telegram::sendMessage([
-                    'chat_id' => $adminId,
-                    'text' => "⏭️ Skipped duplicate update: $updateId (Last: $lastProcessedId)"
-                ]);
                 
                 return response()->json(['status' => 'duplicate']);
             }
@@ -43,16 +39,12 @@ class TelegramWebhookController extends Controller
             Telegram::sendMessage([
                 'chat_id' => $adminId,
                 'text' => "📥 Webhook received:
-    Update ID: " . $updateId . "
-    Type: " . $this->getUpdateType($update)
+                Update ID: " . $updateId . "
+                Type: " . $this->getUpdateType($update)
             ]);
     
             // ✅ معالجة Callbacks أولاً (قبل commandsHandler)
             if ($callbackQuery = $update->getCallbackQuery()) {
-                Telegram::sendMessage([
-                    'chat_id' => $adminId,
-                    'text' => "🔘 Processing callback: " . $callbackQuery->getData()
-                ]);
                 
                 $this->botService->handleCallback($callbackQuery);
                 
@@ -65,19 +57,11 @@ class TelegramWebhookController extends Controller
                 
                 // ✅ إذا كانت رسالة أمر (تبدأ بـ /)
                 if (str_starts_with($text, '/')) {
-                    Telegram::sendMessage([
-                        'chat_id' => $adminId,
-                        'text' => "⚡ Processing command: " . $text
-                    ]);
                     
                     Telegram::commandsHandler(true);
                 } 
                 // ✅ إذا كانت رسالة عادية
                 else {
-                    Telegram::sendMessage([
-                        'chat_id' => $adminId,
-                        'text' => "💬 Processing message: " . $text
-                    ]);
                     
                     $this->handleMessage($message);
                 }
@@ -89,9 +73,9 @@ class TelegramWebhookController extends Controller
             Telegram::sendMessage([
                 'chat_id' => $adminId,
                 'text' => "❌ Error:
-    " . $e->getMessage() . "
-    
-    File: " . basename($e->getFile()) . ":" . $e->getLine()
+                " . $e->getMessage() . "
+                
+                File: " . basename($e->getFile()) . ":" . $e->getLine()
             ]);
             
             return response()->json(['status' => 'error'], 500);

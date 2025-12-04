@@ -16,7 +16,6 @@ class MenuService
     
     public function showWelcomeMessage(User $user)  // ✅ حذفنا $command
     {
-        $this->logger->info("Showing welcome message", ['user_id' => $user->id]);
         
         $firstName = htmlspecialchars($user->first_name ?? 'مستخدم', ENT_QUOTES, 'UTF-8');
         
@@ -44,17 +43,15 @@ class MenuService
             ])
         ]);
         
-        $this->logger->success("Welcome message sent");
+        
     }
     
     public function showMainMenu(User $user)  // ✅ حذفنا $command
     {
-        $this->logger->info("Showing main menu", ['user_id' => $user->id]);
         
         $subscription = $user->activeSubscription;
         
         if (!$subscription) {
-            $this->logger->warning("No active subscription found");
             $this->showWelcomeMessage($user);  // ✅ بدون $command
             return;
         }
@@ -97,6 +94,6 @@ class MenuService
             ])
         ]);
         
-        $this->logger->success("Main menu sent");
+        
     }
 }

@@ -27,21 +27,17 @@ class StartCommand extends Command
     public function handle()
     {
         try {
-            $this->logger->info("START COMMAND TRIGGERED");
-            
             $update = $this->getUpdate();
             $message = $update->getMessage();
             
             if (!$message) {
-                $this->logger->warning("No message found");
                 return;
             }
             
             $telegramUser = $message->getFrom();
             
             if (!$telegramUser) {
-                $this->logger->error("No user data in message");
-                $this->replyWithMessage(['text' => '❌ خطأ في استقبال بيانات المستخدم']);
+               $this->replyWithMessage(['text' => '❌ خطأ في استقبال بيانات المستخدم']);
                 return;
             }
             
@@ -53,26 +49,20 @@ class StartCommand extends Command
             
             // إنشاء أو تحديث المستخدم
             $user = $this->userService->createOrUpdateFromTelegram($telegramUser);
-            
-            $this->logger->success("User processed", [
-                'id' => $user->id,
-                'telegram_id' => $user->telegram_id
-            ]);
+          
             
             // عرض القائمة المناسبة
            
             if ($user->hasActiveSubscription()) {
-                $this->logger->info("📋 Showing MAIN MENU");
+                
                 $this->menuService->showMainMenu($user);  // ✅ بدون $this
             } else {
-                $this->logger->info("🎁 Showing WELCOME MESSAGE");
+                
                 $this->menuService->showWelcomeMessage($user);  // ✅ بدون $this
             }
             
-            $this->logger->success("START COMMAND COMPLETED");
-            
         } catch (\Exception $e) {
-            $this->logger->exception($e);
+            
             $this->replyWithMessage([
                 'text' => '❌ حدث خطأ. يرجى المحاولة مرة أخرى.'
             ]);

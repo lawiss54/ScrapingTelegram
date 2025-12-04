@@ -13,6 +13,13 @@ use Carbon\Carbon;
 
 class TelegramBotService
 {
+    protected TelegramLogger $logger;
+    
+    public function __construct()
+    {
+        $this->logger = new TelegramLogger();
+    }
+    
     public function handleCallback($callbackQuery)
     {
         $data = $callbackQuery->getData();
@@ -22,22 +29,122 @@ class TelegramBotService
 
         $user = User::where('telegram_id', $chatId)->first();
 
+        if (!$user) {
+            Telegram::answerCallbackQuery([
+                'callback_query_id' => $callbackId,
+                'text' => '❌ مستخدم غير موجود',
+                'show_alert' => true,
+            ]);
+            return;
+        }
+
+        $this->logger->info("Handling callback", [
+            'data' => $data,
+            'user_id' => $user->id
+        ]);
+
         match (true) {
+            // القائمة الرئيسية
+            $data === 'back_to_start' => $this->backToStart($user, $chatId, $messageId, $callbackId),
+            
+            // التجربة المجانية والاشتراكات
             $data === 'trial_24h' => $this->handleTrialRequest($user, $chatId, $messageId, $callbackId),
             $data === 'show_subscriptions' => $this->showSubscriptionPlans($chatId, $messageId, $callbackId),
+            
+            // اختيار الخطط والدفع
             str_starts_with($data, 'select_plan_') => $this->showPaymentInfo($data, $user, $chatId, $messageId, $callbackId),
             str_starts_with($data, 'confirm_payment_') => $this->requestPaymentProof($data, $user, $chatId, $callbackId),
+            
+            // معالجة الطلبات (للأدمن)
             str_starts_with($data, 'approve_') => $this->approvePayment($data, $callbackQuery),
             str_starts_with($data, 'reject_') => $this->rejectPayment($data, $callbackQuery),
+            
+            // القوائم الفرعية
             $data === 'start_using' => $this->handleStartUsing($user, $chatId, $callbackId),
             $data === 'help' => $this->showHelp($chatId, $callbackId),
             $data === 'subscription_info' => $this->showSubscriptionInfo($user, $chatId, $callbackId),
-            default => null,
+            
+            default => $this->handleUnknownCallback($callbackId),
         };
     }
 
+    // ==================== القائمة الرئيسية ====================
+    
+    protected function backToStart($user, $chatId, $messageId, $callbackId)
+    {
+        $this->logger->info("Back to start", ['user_id' => $user->id]);
+        
+        $menuService = new MenuService();
+        
+        if ($user->hasActiveSubscription()) {
+            $subscription = $user->activeSubscription;
+            $daysLeft = now()->diffInDays($subscription->ends_at, false);
+            $daysLeft = max(0, (int) ceil($daysLeft));
+            
+            $firstName = htmlspecialchars($user->first_name ?? 'مستخدم', ENT_QUOTES, 'UTF-8');
+            $planType = $subscription->plan_type ?? 'غير محدد';
+            $price = number_format($subscription->price ?? 0, 2);
+            $subscriptionEmoji = $subscription->is_trial ? '🎁' : '💎';
+            $subscriptionStatus = $subscription->is_trial ? 'تجريبي' : 'مدفوع';
+            
+            $message = "✅ مرحباً <b>{$firstName}</b>!\n\n"
+                . "اشتراكك نشط ✨\n\n"
+                . "{$subscriptionEmoji} النوع: {$subscriptionStatus}\n"
+                . "📦 الخطة: {$planType}\n"
+                . "📅 متبقي: <b>{$daysLeft}</b> يوم\n"
+                . "💰 السعر: \${$price}\n\n"
+                . "يمكنك الآن استخدام جميع مميزات البوت! 🎉";
+            
+            $keyboard = [
+                'inline_keyboard' => [
+                    [
+                        ['text' => '🚀 بدء الاستخدام', 'callback_data' => 'start_using'],
+                        ['text' => '❓ مساعدة', 'callback_data' => 'help']
+                    ],
+                    [
+                        ['text' => '📊 معلومات الاشتراك', 'callback_data' => 'subscription_info']
+                    ]
+                ]
+            ];
+        } else {
+            $firstName = htmlspecialchars($user->first_name ?? 'مستخدم', ENT_QUOTES, 'UTF-8');
+            
+            $message = "🎉 مرحباً بك <b>{$firstName}</b>!\n\n"
+                . "أهلاً بك في البوت الخاص بنا 🤖\n\n"
+                . "للبدء في استخدام البوت، يمكنك اختيار:\n\n"
+                . "🎁 تجربة مجانية لمدة 24 ساعة\n"
+                . "💎 أو الاشتراك المباشر للحصول على جميع المميزات\n\n"
+                . "اختر ما يناسبك:";
+            
+            $keyboard = [
+                'inline_keyboard' => [
+                    [
+                        ['text' => '🎁 فترة تجريبية 24 ساعة', 'callback_data' => 'trial_24h']
+                    ],
+                    [
+                        ['text' => '💎 الاشتراك المدفوع', 'callback_data' => 'show_subscriptions']
+                    ]
+                ]
+            ];
+        }
+        
+        Telegram::editMessageText([
+            'chat_id' => $chatId,
+            'message_id' => $messageId,
+            'text' => $message,
+            'parse_mode' => 'HTML',
+            'reply_markup' => json_encode($keyboard)
+        ]);
+        
+        Telegram::answerCallbackQuery(['callback_query_id' => $callbackId]);
+    }
+
+    // ==================== التجربة المجانية ====================
+
     protected function handleTrialRequest($user, $chatId, $messageId, $callbackId)
     {
+        $this->logger->info("Trial request", ['user_id' => $user->id]);
+        
         $hasUsedTrial = Subscription::where('user_id', $user->id)
             ->where('plan_type', 'trial')
             ->exists();
@@ -58,16 +165,20 @@ class TelegramBotService
             'starts_at' => now(),
             'ends_at' => now()->addHours(24),
             'is_active' => true,
+            'is_trial' => true,
             'status' => 'active',
         ]);
 
         $user->update(['is_active' => true]);
 
-        $keyboard = Keyboard::make()->inline()
-            ->row([
-                Keyboard::inlineButton(['text' => '🚀 بدء الاستخدام', 'callback_data' => 'start_using']),
-                Keyboard::inlineButton(['text' => '❓ مساعدة', 'callback_data' => 'help']),
-            ]);
+        $keyboard = [
+            'inline_keyboard' => [
+                [
+                    ['text' => '🚀 بدء الاستخدام', 'callback_data' => 'start_using'],
+                    ['text' => '❓ مساعدة', 'callback_data' => 'help']
+                ]
+            ]
+        ];
 
         Telegram::editMessageText([
             'chat_id' => $chatId,
@@ -77,23 +188,32 @@ class TelegramBotService
                 "🎁 المدة: 24 ساعة\n" .
                 "⏰ تنتهي في: " . now()->addHours(24)->format('Y-m-d H:i') . "\n\n" .
                 "يمكنك الآن استخدام جميع مميزات البوت! 🎉",
-            'reply_markup' => $keyboard,
+            'reply_markup' => json_encode($keyboard),
         ]);
 
         Telegram::answerCallbackQuery([
             'callback_query_id' => $callbackId,
             'text' => '✅ تم التفعيل',
         ]);
+        
+        $this->logger->success("Trial activated", ['user_id' => $user->id]);
     }
+
+    // ==================== خطط الاشتراك ====================
 
     protected function showSubscriptionPlans($chatId, $messageId, $callbackId)
     {
-        $keyboard = Keyboard::make()->inline()
-            ->row([Keyboard::inlineButton(['text' => '📦 شهري - $10', 'callback_data' => 'select_plan_monthly'])])
-            ->row([Keyboard::inlineButton(['text' => '📦 ربع سنوي - $25', 'callback_data' => 'select_plan_quarterly'])])
-            ->row([Keyboard::inlineButton(['text' => '📦 نصف سنوي - $45', 'callback_data' => 'select_plan_semi_annual'])])
-            ->row([Keyboard::inlineButton(['text' => '📦 سنوي - $90', 'callback_data' => 'select_plan_yearly'])])
-            ->row([Keyboard::inlineButton(['text' => '« رجوع', 'callback_data' => 'back_to_start'])]);
+        $this->logger->info("Showing subscription plans");
+        
+        $keyboard = [
+            'inline_keyboard' => [
+                [['text' => '📦 شهري - $10', 'callback_data' => 'select_plan_monthly']],
+                [['text' => '📦 ربع سنوي - $25', 'callback_data' => 'select_plan_quarterly']],
+                [['text' => '📦 نصف سنوي - $45', 'callback_data' => 'select_plan_semi_annual']],
+                [['text' => '📦 سنوي - $90', 'callback_data' => 'select_plan_yearly']],
+                [['text' => '« رجوع', 'callback_data' => 'back_to_start']]
+            ]
+        ];
 
         $message =
             "💎 خطط الاشتراك المتاحة:\n\n" .
@@ -107,7 +227,7 @@ class TelegramBotService
             'chat_id' => $chatId,
             'message_id' => $messageId,
             'text' => $message,
-            'reply_markup' => $keyboard,
+            'reply_markup' => json_encode($keyboard),
         ]);
 
         Telegram::answerCallbackQuery(['callback_query_id' => $callbackId]);
@@ -116,10 +236,13 @@ class TelegramBotService
     protected function showPaymentInfo($data, $user, $chatId, $messageId, $callbackId)
     {
         $planType = str_replace('select_plan_', '', $data);
+        
+        $this->logger->info("Showing payment info", [
+            'user_id' => $user->id,
+            'plan' => $planType
+        ]);
 
         $plans = [
-            
-            'monthly' => ['duration' => 1, 'price' => 0, 'name' => 'تجريبي'],
             'monthly' => ['duration' => 30, 'price' => 10, 'name' => 'شهري'],
             'quarterly' => ['duration' => 90, 'price' => 25, 'name' => 'ربع سنوي'],
             'semi_annual' => ['duration' => 180, 'price' => 45, 'name' => 'نصف سنوي'],
@@ -130,19 +253,16 @@ class TelegramBotService
 
         cache()->put("selected_plan_{$user->telegram_id}", $planType, now()->addHours(1));
 
-        $keyboard = Keyboard::make()->inline()
-            ->row([
-                Keyboard::inlineButton([
-                    'text' => '✅ تأكيد الدفع',
-                    'callback_data' => "confirm_payment_{$planType}",
-                ]),
-            ])
-            ->row([
-                Keyboard::inlineButton([
-                    'text' => '« رجوع للخطط',
-                    'callback_data' => 'show_subscriptions',
-                ]),
-            ]);
+        $keyboard = [
+            'inline_keyboard' => [
+                [
+                    ['text' => '✅ تأكيد الدفع', 'callback_data' => "confirm_payment_{$planType}"]
+                ],
+                [
+                    ['text' => '« رجوع للخطط', 'callback_data' => 'show_subscriptions']
+                ]
+            ]
+        ];
 
         $message =
             "📋 تفاصيل الاشتراك:\n\n" .
@@ -164,7 +284,7 @@ class TelegramBotService
             'chat_id' => $chatId,
             'message_id' => $messageId,
             'text' => $message,
-            'reply_markup' => $keyboard,
+            'reply_markup' => json_encode($keyboard),
         ]);
 
         Telegram::answerCallbackQuery(['callback_query_id' => $callbackId]);
@@ -173,6 +293,12 @@ class TelegramBotService
     protected function requestPaymentProof($data, $user, $chatId, $callbackId)
     {
         $planType = str_replace('confirm_payment_', '', $data);
+        
+        $this->logger->info("Requesting payment proof", [
+            'user_id' => $user->id,
+            'plan' => $planType
+        ]);
+        
         cache()->put("waiting_payment_proof_{$chatId}", $planType, now()->addHours(1));
 
         Telegram::sendMessage([
@@ -191,6 +317,8 @@ class TelegramBotService
         ]);
     }
 
+    // ==================== معالجة إثبات الدفع ====================
+
     public function handlePaymentProof($message)
     {
         $chatId = $message->getChat()->getId();
@@ -201,6 +329,11 @@ class TelegramBotService
         }
 
         $planType = cache()->get("waiting_payment_proof_{$chatId}");
+        
+        $this->logger->info("Processing payment proof", [
+            'user_id' => $user->id,
+            'plan' => $planType
+        ]);
 
         $paymentProof = null;
         $transactionId = null;
@@ -234,7 +367,13 @@ class TelegramBotService
                 "🔖 رقم الطلب: #{$request->id}\n" .
                 "⏳ جاري المراجعة...",
         ]);
+        
+        $this->logger->success("Payment proof submitted", [
+            'request_id' => $request->id
+        ]);
     }
+
+    // ==================== موافقة/رفض الطلبات (للأدمن) ====================
 
     protected function approvePayment($data, $callbackQuery)
     {
@@ -260,6 +399,11 @@ class TelegramBotService
             ]);
             return;
         }
+        
+        $this->logger->info("Approving payment", [
+            'request_id' => $requestId,
+            'admin_id' => $adminId
+        ]);
 
         $planDurations = [
             'monthly' => 30,
@@ -287,6 +431,7 @@ class TelegramBotService
             'starts_at' => now(),
             'ends_at' => now()->addDays($planDurations[$request->plan_type]),
             'is_active' => true,
+            'is_trial' => false,
             'status' => 'active',
         ]);
 
@@ -308,20 +453,28 @@ class TelegramBotService
             'callback_query_id' => $callbackQuery->getId(),
             'text' => '✅ تمت الموافقة',
         ]);
+        
+        $this->logger->success("Payment approved", [
+            'request_id' => $requestId,
+            'subscription_id' => $subscription->id
+        ]);
     }
 
     protected function sendWelcomeAfterApproval($user, $subscription)
     {
         $daysLeft = now()->diffInDays($subscription->ends_at);
 
-        $keyboard = Keyboard::make()->inline()
-            ->row([
-                Keyboard::inlineButton(['text' => '🚀 بدء الاستخدام', 'callback_data' => 'start_using']),
-            ])
-            ->row([
-                Keyboard::inlineButton(['text' => '📊 معلومات الاشتراك', 'callback_data' => 'subscription_info']),
-                Keyboard::inlineButton(['text' => '❓ مساعدة', 'callback_data' => 'help']),
-            ]);
+        $keyboard = [
+            'inline_keyboard' => [
+                [
+                    ['text' => '🚀 بدء الاستخدام', 'callback_data' => 'start_using']
+                ],
+                [
+                    ['text' => '📊 معلومات الاشتراك', 'callback_data' => 'subscription_info'],
+                    ['text' => '❓ مساعدة', 'callback_data' => 'help']
+                ]
+            ]
+        ];
 
         $planNames = [
             'monthly' => 'شهري',
@@ -343,7 +496,7 @@ class TelegramBotService
                 "⏰ المتبقي: {$daysLeft} يوم\n" .
                 "━━━━━━━━━━━━━━━━━━\n\n" .
                 "اضغط على «بدء الاستخدام» للبدء 🚀",
-            'reply_markup' => $keyboard,
+            'reply_markup' => json_encode($keyboard),
         ]);
     }
 
@@ -371,6 +524,11 @@ class TelegramBotService
             ]);
             return;
         }
+        
+        $this->logger->info("Rejecting payment", [
+            'request_id' => $requestId,
+            'admin_id' => $adminId
+        ]);
 
         $request->update([
             'status' => 'rejected',
@@ -402,10 +560,16 @@ class TelegramBotService
             'callback_query_id' => $callbackQuery->getId(),
             'text' => '❌ تم الرفض',
         ]);
+        
+        $this->logger->warning("Payment rejected", ['request_id' => $requestId]);
     }
+
+    // ==================== القوائم الفرعية ====================
 
     protected function handleStartUsing($user, $chatId, $callbackId)
     {
+        $this->logger->info("Start using", ['user_id' => $user->id]);
+        
         Telegram::sendMessage([
             'chat_id' => $chatId,
             'text' =>
@@ -422,6 +586,8 @@ class TelegramBotService
 
     protected function showHelp($chatId, $callbackId)
     {
+        $this->logger->info("Showing help");
+        
         Telegram::sendMessage([
             'chat_id' => $chatId,
             'text' =>
@@ -439,6 +605,8 @@ class TelegramBotService
 
     protected function showSubscriptionInfo($user, $chatId, $callbackId)
     {
+        $this->logger->info("Showing subscription info", ['user_id' => $user->id]);
+        
         $subscription = $user->activeSubscription;
 
         if (!$subscription) {
@@ -446,11 +614,14 @@ class TelegramBotService
                 'chat_id' => $chatId,
                 'text' => "⚠️ ليس لديك اشتراك نشط",
             ]);
+            
+            Telegram::answerCallbackQuery(['callback_query_id' => $callbackId]);
             return;
         }
 
         $totalDays = $subscription->starts_at->diffInDays($subscription->ends_at);
         $passedDays = $subscription->starts_at->diffInDays(now());
+        $remainingDays = now()->diffInDays($subscription->ends_at, false);
         $progress = $totalDays > 0 ? ($passedDays / $totalDays) * 100 : 0;
 
         Telegram::sendMessage([
@@ -462,7 +633,7 @@ class TelegramBotService
                 "💰 السعر: \${$subscription->price}\n" .
                 "📅 البداية: " . $subscription->starts_at->format('Y-m-d') . "\n" .
                 "📅 النهاية: " . $subscription->ends_at->format('Y-m-d') . "\n" .
-                "⏰ المتبقي: " . now()->diffInDays($subscription->ends_at) . " يوم\n" .
+                "⏰ المتبقي: " . max(0, $remainingDays) . " يوم\n" .
                 "📈 التقدم: " . round($progress) . "%\n" .
                 "━━━━━━━━━━━━━━━━━━",
         ]);
@@ -470,8 +641,23 @@ class TelegramBotService
         Telegram::answerCallbackQuery(['callback_query_id' => $callbackId]);
     }
 
+    // ==================== معالجة الأخطاء ====================
+    
+    protected function handleUnknownCallback($callbackId)
+    {
+        $this->logger->warning("Unknown callback");
+        
+        Telegram::answerCallbackQuery([
+            'callback_query_id' => $callbackId,
+            'text' => '⚠️ أمر غير معروف',
+            'show_alert' => false,
+        ]);
+    }
+
+    // ==================== Helper Methods ====================
+
     protected function isAdmin($telegramId): bool
     {
-        return in_array($telegramId, config('telegram.admin_ids'));
+        return in_array($telegramId, config('telegram.bots.mybot.admin_ids', []));
     }
 }
