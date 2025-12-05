@@ -145,8 +145,9 @@ class AdminHandler
 
 
         // تحديث الرسالة للأدمن
-        $this->logger->info("start update admine message", ['rrquest' => $request]);
-
+        $this->logger->info("start update admine message");
+        $this->logger->info("start update admine message", ['callbackQuery' => $callbackQuery, 'requestId' => $requestId, 'request' => $request]);
+        
         $this->updateAdminMessage($callbackQuery, $requestId, $request, 'rejected');
 
         // إعلام المستخدم بالرفض
