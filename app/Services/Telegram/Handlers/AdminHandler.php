@@ -118,12 +118,16 @@ class AdminHandler
         $adminId = $callbackQuery->getFrom()->getId();
 
         if (!$this->isAdmin($adminId)) {
+            $this->logger->info("is npt admin", ['user_id' => $adminId]);
+
             $this->sendUnauthorizedMessage($callbackQuery->getId());
             return;
         }
 
         $requestId = str_replace('reject_', '', $data);
         $request = VerificationRequest::find($requestId);
+        $this->logger->info("request data", ['rrquest' => $request]);
+
 
         if (!$this->isValidRequest($request, $callbackQuery->getId())) {
             return;
@@ -134,6 +138,7 @@ class AdminHandler
             'status'      => 'rejected',
             'reviewed_at' => now(),
         ]);
+        $request->save();
 
         // تحديث الرسالة للأدمن
         $this->updateAdminMessage($callbackQuery, $requestId, $request, 'rejected');
