@@ -74,8 +74,8 @@ class PaymentHandler
             'state' => $userState,
             'photos_type' => gettype($photos),
             'photos_is_null' => $photos === null ? 'yes' : 'no',
-            'photos_is_array' => is_array($photos) ? 'yes' : 'no',
-            'photos_count' => is_array($photos) ? count($photos) : 0,
+            'photos_is_empty' => empty($photos) ? 'yes' : 'no',
+            'photos_count' => is_countable($photos) ? count($photos) : 'not countable',
             'text_type' => gettype($text),
             'text_value' => $text,
             'text_length' => $text ? strlen($text) : 0,
@@ -96,10 +96,12 @@ class PaymentHandler
                 'user_id' => $user->id
             ]);
             
-            if ($photos && is_array($photos) && count($photos) > 0) {
+            // ✅ التحقق الصحيح: استخدام empty() بدلاً من is_array()
+            if ($photos && !empty($photos)) {
+                $photoCount = is_countable($photos) ? count($photos) : 'unknown';
                 $this->logger->info("✅ Photo detected, processing...", [
                     'user_id' => $user->id,
-                    'photos_count' => count($photos)
+                    'photos_count' => $photoCount
                 ]);
                 $this->handlePaymentImage($message, $user, $chatId);
             } else {
@@ -118,7 +120,8 @@ class PaymentHandler
                 'user_id' => $user->id
             ]);
             
-            if ($text && !($photos && is_array($photos) && count($photos) > 0)) {
+            // التحقق من أن الرسالة نص فقط (بدون صورة)
+            if ($text && empty($photos)) {
                 $this->logger->info("✅ Transaction ID detected, processing...", [
                     'user_id' => $user->id,
                     'text_length' => strlen($text)
@@ -128,7 +131,7 @@ class PaymentHandler
                 $this->logger->warning("❌ Invalid input for transaction ID", [
                     'user_id' => $user->id,
                     'has_text' => $text ? 'yes' : 'no',
-                    'has_photo' => ($photos && is_array($photos)) ? 'yes' : 'no'
+                    'has_photo' => empty($photos) ? 'no' : 'yes'
                 ]);
                 $this->requestValidTransactionId($chatId);
             }
@@ -184,14 +187,41 @@ class PaymentHandler
         try {
             $photos = $message->getPhoto();
             
-            if (!$photos || count($photos) === 0) {
-                $this->logger->error("No photos array found", ['user_id' => $user->id]);
+            // التحقق من وجود الصور
+            if (empty($photos)) {
+                $this->logger->error("No photos found in handlePaymentImage", [
+                    'user_id' => $user->id
+                ]);
                 $this->requestValidImage($chatId);
                 return;
             }
             
-            $largestPhoto = end($photos);
-            $paymentProof = $largestPhoto->getFileId();
+            // الحصول على أكبر حجم صورة
+            // $photos يمكن أن يكون array of objects أو array of arrays
+            $largestPhoto = is_array($photos) ? end($photos) : $photos[count($photos) - 1];
+            
+            // استخراج file_id
+            $paymentProof = null;
+            if (is_object($largestPhoto) && method_exists($largestPhoto, 'getFileId')) {
+                $paymentProof = $largestPhoto->getFileId();
+            } elseif (is_array($largestPhoto) && isset($largestPhoto['file_id'])) {
+                $paymentProof = $largestPhoto['file_id'];
+            } elseif (is_object($largestPhoto) && isset($largestPhoto->file_id)) {
+                $paymentProof = $largestPhoto->file_id;
+            }
+            
+            if (!$paymentProof) {
+                $this->logger->error("Could not extract file_id from photo", [
+                    'user_id' => $user->id,
+                    'photo_type' => gettype($largestPhoto)
+                ]);
+                
+                Telegram::sendMessage([
+                    'chat_id' => $chatId,
+                    'text' => '⚠️ حدث خطأ في معالجة الصورة. الرجاء المحاولة مرة أخرى.'
+                ]);
+                return;
+            }
             
             $this->logger->info("Payment image received successfully", [
                 'user_id' => $user->id,
@@ -232,6 +262,7 @@ class PaymentHandler
             $this->logger->error("Error in handlePaymentImage", [
                 'user_id' => $user->id,
                 'error' => $e->getMessage(),
+                'line' => $e->getLine(),
                 'trace' => $e->getTraceAsString()
             ]);
             
