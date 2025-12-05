@@ -136,6 +136,9 @@ class UserInfoHandler
         $this->logger->info("Showing subscription info", ['user_id' => $user->id]);
         
         $subscription = $user->activeSubscription;
+        
+        $this->logger->info("details of subscription", ['details' => $subscription]);
+        
 
         if (!$subscription) {
             $this->sendNoSubscriptionMessage($chatId, $callbackId);
