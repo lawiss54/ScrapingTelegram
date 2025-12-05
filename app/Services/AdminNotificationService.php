@@ -3,7 +3,7 @@
 namespace App\Services;
 
 use Telegram\Bot\Laravel\Facades\Telegram;
-use App\Models\VerificationRequest;
+use App\Models\{VerificationRequest, User};
 
 class AdminNotificationService
 {
