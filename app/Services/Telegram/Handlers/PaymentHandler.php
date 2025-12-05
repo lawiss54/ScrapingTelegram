@@ -232,7 +232,7 @@ class PaymentHandler
             ]);
         }
     }
-    /**
+/**
      * معالجة رقم العملية
      */
     protected function handleTransactionId($message, User $user, $chatId)
@@ -244,7 +244,12 @@ class PaymentHandler
         if (!$planType || !$paymentProof) {
             Telegram::sendMessage([
                 'chat_id' => $chatId,
-                'text' => '⚠️ انتهت جلسة الدفع. الرجاء البدء من جديد.'
+                'text' => '⚠️ انتهت جلسة الدفع. الرجاء البدء من جديد.',
+                'reply_markup' => json_encode([
+                    'inline_keyboard' => [
+                        [['text' => '🔄 العودة للقائمة', 'callback_data' => 'back_to_start']]
+                    ]
+                ])
             ]);
             $this->clearUserCache($chatId);
             return;
@@ -256,22 +261,59 @@ class PaymentHandler
             'transaction_id' => $transactionId
         ]);
         
-        // إنشاء طلب التحقق
-        $request = $this->createVerificationRequest($user, $planType, $paymentProof, $transactionId);
-        
-        // إرسال للأدمن
-        app(AdminNotificationService::class)->sendVerificationRequest($request);
-        
-        // تأكيد للمستخدم
-        $this->sendConfirmationMessage($chatId, $request, $planType, $transactionId);
-        
-        // مسح الحالة
-        $this->clearUserCache($chatId);
-        
-        $this->logger->success("Verification request created", [
-            'request_id' => $request->id
-        ]);
+        try {
+            // إنشاء طلب التحقق
+            $request = $this->createVerificationRequest($user, $planType, $paymentProof, $transactionId);
+            
+            $this->logger->info("Verification request created with transaction ID", [
+                'request_id' => $request->id,
+                'user_id' => $user->id
+            ]);
+            
+            // مسح الحالة
+            $this->clearUserCache($chatId);
+            $this->logger->info("Cache cleared after transaction ID", ['user_id' => $user->id]);
+            
+            // إرسال للأدمن (with error handling)
+            try {
+                app(AdminNotificationService::class)->sendVerificationRequest($request);
+                $this->logger->info("Sent to admin", ['request_id' => $request->id]);
+            } catch (\Exception $adminError) {
+                $this->logger->error("Failed to send to admin", [
+                    'request_id' => $request->id,
+                    'error' => $adminError->getMessage()
+                ]);
+                // نستمر حتى لو فشل إرسال للأدمن
+            }
+            
+            // تأكيد للمستخدم
+            $this->sendConfirmationMessage($chatId, $request, $planType, $transactionId);
+            
+            $this->logger->success("Transaction ID processed successfully", [
+                'request_id' => $request->id,
+                'user_id' => $user->id
+            ]);
+            
+        } catch (\Exception $e) {
+            $this->logger->error("Error in handleTransactionId", [
+                'user_id' => $user->id,
+                'error' => $e->getMessage(),
+                'line' => $e->getLine(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            Telegram::sendMessage([
+                'chat_id' => $chatId,
+                'text' => '⚠️ حدث خطأ في معالجة الطلب. الرجاء المحاولة مرة أخرى.',
+                'reply_markup' => json_encode([
+                    'inline_keyboard' => [
+                        [['text' => '🔄 العودة للقائمة', 'callback_data' => 'back_to_start']]
+                    ]
+                ])
+            ]);
+        }
     }
+    
     
     /**
      * تخطي رقم العملية
@@ -388,6 +430,7 @@ class PaymentHandler
         }
     }
     
+    
     /**
      * إلغاء عملية الدفع
      */
@@ -417,6 +460,7 @@ class PaymentHandler
         ]);
     }
     
+    
     /**
      * طلب صورة صحيحة
      */
@@ -438,6 +482,7 @@ class PaymentHandler
         ]);
     }
     
+    
     /**
      * طلب رقم عملية صحيح
      */
@@ -457,6 +502,7 @@ class PaymentHandler
         ]);
     }
     
+    
     /**
      * إنشاء طلب التحقق
      */
@@ -470,6 +516,7 @@ class PaymentHandler
             'status' => 'pending',
         ]);
     }
+    
     
     /**
      * إرسال رسالة التأكيد
