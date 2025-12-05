@@ -200,7 +200,6 @@ class PaymentHandler
             
             $keyboard = [
                 'inline_keyboard' => [
-                    [['text' => '⏭️ تخطي رقم العملية', 'callback_data' => 'skip_transaction_id']],
                     [['text' => '❌ إلغاء العملية', 'callback_data' => 'cancel_payment']]
                 ]
             ];
@@ -211,7 +210,7 @@ class PaymentHandler
                     "✅ <b>تم استلام الصورة!</b>\n\n" .
                     "📝 <b>الخطوة 2 من 2:</b> رقم العملية\n\n" .
                     "الرجاء إرسال رقم العملية (Transaction ID)\n" .
-                    "أو اضغط \"تخطي\" إذا لم يكن متوفراً",
+                    "مثال: TRX123456789",
                 'parse_mode' => 'HTML',
                 'reply_markup' => json_encode($keyboard)
             ]);
@@ -232,7 +231,7 @@ class PaymentHandler
             ]);
         }
     }
-/**
+    /**
      * معالجة رقم العملية
      */
     protected function handleTransactionId($message, User $user, $chatId)
@@ -313,7 +312,6 @@ class PaymentHandler
             ]);
         }
     }
-    
     
     /**
      * تخطي رقم العملية
@@ -430,7 +428,6 @@ class PaymentHandler
         }
     }
     
-    
     /**
      * إلغاء عملية الدفع
      */
@@ -460,7 +457,6 @@ class PaymentHandler
         ]);
     }
     
-    
     /**
      * طلب صورة صحيحة
      */
@@ -482,7 +478,6 @@ class PaymentHandler
         ]);
     }
     
-    
     /**
      * طلب رقم عملية صحيح
      */
@@ -495,13 +490,11 @@ class PaymentHandler
                 "مثال: TRX123456789",
             'reply_markup' => json_encode([
                 'inline_keyboard' => [
-                    [['text' => '⏭️ تخطي رقم العملية', 'callback_data' => 'skip_transaction_id']],
                     [['text' => '❌ إلغاء العملية', 'callback_data' => 'cancel_payment']]
                 ]
             ])
         ]);
     }
-    
     
     /**
      * إنشاء طلب التحقق
@@ -516,7 +509,6 @@ class PaymentHandler
             'status' => 'pending',
         ]);
     }
-    
     
     /**
      * إرسال رسالة التأكيد

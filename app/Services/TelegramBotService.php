@@ -92,9 +92,6 @@ class TelegramBotService
             str_starts_with($data, 'confirm_payment_') => 
                 $this->paymentHandler->requestPaymentProof($data, $user, $chatId, $callbackId),
                 
-            $data === 'skip_transaction_id' => 
-                $this->paymentHandler->skipTransactionId($user, $chatId, $callbackId),
-                
             $data === 'cancel_payment' => 
                 $this->paymentHandler->cancelPayment($user, $chatId, $messageId, $callbackId),
             

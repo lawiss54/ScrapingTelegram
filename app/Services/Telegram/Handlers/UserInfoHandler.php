@@ -29,12 +29,11 @@ class UserInfoHandler
             return;
         }
 
-        // حساب الأيام المتبقية
         $daysLeft = now()->diffInDays($subscription->ends_at, false);
         $daysLeft = max(0, (int) ceil($daysLeft));
-
+        
         $statusEmoji = $subscription->is_trial ? '🎁' : '💎';
-        $statusText  = $subscription->is_trial ? 'تجريبي' : 'مدفوع';
+        $statusText = $subscription->is_trial ? 'تجريبي' : 'مدفوع';
         
         Telegram::sendMessage([
             'chat_id' => $chatId,
@@ -136,22 +135,57 @@ class UserInfoHandler
     {
         $this->logger->info("Showing subscription info", ['user_id' => $user->id]);
         
-        $subscription = $user->activeSubscription;
+        try {
+            $subscription = $user->activeSubscription;
 
-        if (!$subscription) {
-            $this->sendNoSubscriptionMessage($chatId, $callbackId);
-            return;
+            if (!$subscription) {
+                $this->logger->warning("No active subscription found", ['user_id' => $user->id]);
+                $this->sendNoSubscriptionMessage($chatId, $callbackId);
+                return;
+            }
+
+            $this->logger->info("Subscription found", [
+                'user_id' => $user->id,
+                'subscription_id' => $subscription->id,
+                'plan_type' => $subscription->plan_type
+            ]);
+
+            $subscriptionDetails = $this->buildSubscriptionDetails($subscription);
+            
+            $this->logger->info("Subscription details built", [
+                'user_id' => $user->id,
+                'details_length' => strlen($subscriptionDetails)
+            ]);
+            
+            Telegram::sendMessage([
+                'chat_id' => $chatId,
+                'text' => $subscriptionDetails,
+                'parse_mode' => 'HTML'
+            ]);
+            
+            $this->logger->success("Subscription info sent", ['user_id' => $user->id]);
+
+            Telegram::answerCallbackQuery(['callback_query_id' => $callbackId]);
+            
+        } catch (\Exception $e) {
+            $this->logger->error("Error showing subscription info", [
+                'user_id' => $user->id,
+                'error' => $e->getMessage(),
+                'line' => $e->getLine(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            Telegram::sendMessage([
+                'chat_id' => $chatId,
+                'text' => '⚠️ حدث خطأ في عرض معلومات الاشتراك.'
+            ]);
+            
+            Telegram::answerCallbackQuery([
+                'callback_query_id' => $callbackId,
+                'text' => '⚠️ حدث خطأ',
+                'show_alert' => true
+            ]);
         }
-
-        $subscriptionDetails = $this->buildSubscriptionDetails($subscription);
-        
-        Telegram::sendMessage([
-            'chat_id' => $chatId,
-            'text' => $subscriptionDetails,
-            'parse_mode' => 'HTML'
-        ]);
-
-        Telegram::answerCallbackQuery(['callback_query_id' => $callbackId]);
     }
     
     /**
@@ -159,31 +193,58 @@ class UserInfoHandler
      */
     protected function buildSubscriptionDetails($subscription): string
     {
-        $totalDays     = $subscription->starts_at->diffInDays($subscription->ends_at);
-        $passedDays    = $subscription->starts_at->diffInDays(now());
-        $remainingDays = now()->diffInDays($subscription->ends_at, false);
-
-        $progress = $totalDays > 0 ? ($passedDays / $totalDays) * 100 : 0;
-        
-        $progressBar = $this->buildProgressBar($progress);
-
-        $statusEmoji = $subscription->is_trial ? '🎁' : '💎';
-        $statusText  = $subscription->is_trial ? 'تجريبي' : 'مدفوع';
-        
-        return "📊 <b>معلومات اشتراكك</b>\n" .
-               "━━━━━━━━━━━━━━━━━━\n\n" .
-               "{$statusEmoji} <b>النوع:</b> {$statusText}\n" .
-               "📦 <b>الخطة:</b> {$subscription->plan_type}\n" .
-               "💰 <b>السعر:</b> \${$subscription->price}\n\n" .
-               "📅 <b>تاريخ البداية:</b>\n" .
-               "   " . $subscription->starts_at->format('Y-m-d H:i') . "\n\n" .
-               "📅 <b>تاريخ الانتهاء:</b>\n" .
-               "   " . $subscription->ends_at->format('Y-m-d H:i') . "\n\n" .
-               "⏰ <b>المتبقي:</b> " . max(0, $remainingDays) . " يوم\n\n" .
-               "📈 <b>التقدم:</b> " . round($progress) . "%\n" .
-               "{$progressBar}\n" .
-               "━━━━━━━━━━━━━━━━━━\n\n" .
-               $this->getSubscriptionWarning($remainingDays);
+        try {
+            $totalDays = $subscription->starts_at->diffInDays($subscription->ends_at);
+            $passedDays = $subscription->starts_at->diffInDays(now());
+            $remainingDays = now()->diffInDays($subscription->ends_at, false);
+            $remainingDays = max(0, (int) ceil($remainingDays));
+            $progress = $totalDays > 0 ? ($passedDays / $totalDays) * 100 : 0;
+            
+            // بناء شريط التقدم
+            $progressBar = $this->buildProgressBar($progress);
+            
+            // تحديد حالة الاشتراك
+            $statusEmoji = $subscription->is_trial ? '🎁' : '💎';
+            $statusText = $subscription->is_trial ? 'تجريبي' : 'مدفوع';
+            
+            // أسماء الخطط
+            $planNames = [
+                'trial' => 'تجريبي 24 ساعة',
+                'monthly' => 'شهري',
+                'quarterly' => 'ربع سنوي',
+                'semi_annual' => 'نصف سنوي',
+                'yearly' => 'سنوي',
+            ];
+            
+            $planName = $planNames[$subscription->plan_type] ?? $subscription->plan_type;
+            
+            return "📊 <b>معلومات اشتراكك</b>\n" .
+                   "━━━━━━━━━━━━━━━━━━\n\n" .
+                   "{$statusEmoji} <b>النوع:</b> {$statusText}\n" .
+                   "📦 <b>الخطة:</b> {$planName}\n" .
+                   "💰 <b>السعر:</b> \${$subscription->price}\n\n" .
+                   "📅 <b>تاريخ البداية:</b>\n" .
+                   "   " . $subscription->starts_at->format('Y-m-d H:i') . "\n\n" .
+                   "📅 <b>تاريخ الانتهاء:</b>\n" .
+                   "   " . $subscription->ends_at->format('Y-m-d H:i') . "\n\n" .
+                   "⏰ <b>المتبقي:</b> {$remainingDays} يوم\n\n" .
+                   "📈 <b>التقدم:</b> " . round($progress) . "%\n" .
+                   "{$progressBar}\n" .
+                   "━━━━━━━━━━━━━━━━━━\n\n" .
+                   $this->getSubscriptionWarning($remainingDays);
+                   
+        } catch (\Exception $e) {
+            $this->logger->error("Error building subscription details", [
+                'error' => $e->getMessage(),
+                'subscription_id' => $subscription->id ?? 'unknown'
+            ]);
+            
+            // رسالة بسيطة في حالة الخطأ
+            return "📊 <b>معلومات اشتراكك</b>\n\n" .
+                   "📦 الخطة: {$subscription->plan_type}\n" .
+                   "💰 السعر: \${$subscription->price}\n" .
+                   "✅ الاشتراك نشط";
+        }
     }
     
     /**
@@ -192,7 +253,7 @@ class UserInfoHandler
     protected function buildProgressBar(float $progress): string
     {
         $filledBlocks = (int) round($progress / 10);
-        $emptyBlocks  = 10 - $filledBlocks;
+        $emptyBlocks = 10 - $filledBlocks;
         
         return str_repeat('▓', $filledBlocks) . str_repeat('░', $emptyBlocks);
     }

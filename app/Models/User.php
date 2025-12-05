@@ -25,26 +25,35 @@ class User extends Authenticatable
         'is_active' => 'boolean',
     ];
 
-    public function subscriptions()
-    {
-        return $this->hasMany(Subscription::class);
-    }
-
     public function activeSubscription()
     {
         return $this->hasOne(Subscription::class)
             ->where('is_active', true)
-            ->where('ends_at', '>', now());
+            ->where('ends_at', '>', now())
+            ->latest();
     }
-
-    public function verificationRequests()
+    
+    /**
+     * جميع الاشتراكات
+     */
+    public function subscriptions()
     {
-        return $this->hasMany(VerificationRequest::class);
+        return $this->hasMany(Subscription::class);
     }
-
+    
+    /**
+     * التحقق من وجود اشتراك نشط
+     */
     public function hasActiveSubscription(): bool
     {
-        // لازم تستعمل exists() ولا first()
         return $this->activeSubscription()->exists();
+    }
+    
+    /**
+     * الحصول على الاشتراك النشط (Attribute)
+     */
+    public function getActiveSubscriptionAttribute()
+    {
+        return $this->activeSubscription()->first();
     }
 }
