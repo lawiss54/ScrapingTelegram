@@ -288,6 +288,11 @@ class AdminHandler
                     'message_id' => $messageId
                 ]);
                 
+                $this->logger->info("request  details", [
+                    'request' => $request,
+                ]);
+                
+                
                 Telegram::editMessageText([
                     'chat_id' => $chatId,
                     'message_id' => $messageId,
