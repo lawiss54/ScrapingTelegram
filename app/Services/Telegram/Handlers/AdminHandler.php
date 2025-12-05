@@ -132,6 +132,8 @@ class AdminHandler
         if (!$this->isValidRequest($request, $callbackQuery->getId())) {
             return;
         }
+        $this->logger->info("start change status", ['rrquest' => $request]);
+
 
         // تغيير حالة الطلب إلى "مرفوض"
         $request->update([
@@ -139,11 +141,17 @@ class AdminHandler
             'reviewed_at' => now(),
         ]);
         $request->save();
+        $this->logger->info("end update status", ['rrquest' => $request]);
+
 
         // تحديث الرسالة للأدمن
+        $this->logger->info("start update admine message", ['rrquest' => $request]);
+
         $this->updateAdminMessage($callbackQuery, $requestId, $request, 'rejected');
 
         // إعلام المستخدم بالرفض
+        $this->logger->info("start send message ro client", ['rrquest' => $request]);
+
         $this->sendRejectionMessage($request);
 
         Telegram::answerCallbackQuery([
