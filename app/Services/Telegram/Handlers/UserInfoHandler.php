@@ -266,6 +266,13 @@ class UserInfoHandler
             $startsAt = $subscription->starts_at;
             $endsAt = $subscription->ends_at;
             
+            $this->logger->info("Dates retrieved", [
+                'starts_at_type' => gettype($startsAt),
+                'starts_at_value' => $startsAt,
+                'ends_at_type' => gettype($endsAt),
+                'ends_at_value' => $endsAt
+            ]);
+            
             if (!$startsAt || !$endsAt) {
                 $this->logger->warning("Missing dates in subscription", [
                     'subscription_id' => $subscription->id
@@ -273,23 +280,37 @@ class UserInfoHandler
                 return $this->buildSimpleSubscriptionDetails($subscription);
             }
             
+            // Convert to Carbon if needed
+            if (!($startsAt instanceof \Carbon\Carbon)) {
+                $this->logger->info("Converting starts_at to Carbon");
+                $startsAt = \Carbon\Carbon::parse($startsAt);
+            }
+            
+            if (!($endsAt instanceof \Carbon\Carbon)) {
+                $this->logger->info("Converting ends_at to Carbon");
+                $endsAt = \Carbon\Carbon::parse($endsAt);
+            }
+            
+            $this->logger->info("Calculating differences");
+            
             $totalDays = $startsAt->diffInDays($endsAt);
+            $this->logger->info("Total days calculated", ['total_days' => $totalDays]);
+            
             $passedDays = $startsAt->diffInDays(now());
+            $this->logger->info("Passed days calculated", ['passed_days' => $passedDays]);
+            
             $remainingDays = now()->diffInDays($endsAt, false);
             $remainingDays = max(0, (int) ceil($remainingDays));
+            $this->logger->info("Remaining days calculated", ['remaining_days' => $remainingDays]);
             
             $progress = $totalDays > 0 ? ($passedDays / $totalDays) * 100 : 0;
             $progress = max(0, min(100, $progress)); // بين 0 و 100
             
-            $this->logger->info("Dates calculated", [
-                'total_days' => $totalDays,
-                'passed_days' => $passedDays,
-                'remaining_days' => $remainingDays,
-                'progress' => $progress
-            ]);
+            $this->logger->info("Progress calculated", ['progress' => $progress]);
             
             // بناء شريط التقدم
             $progressBar = $this->buildProgressBar($progress);
+            $this->logger->info("Progress bar built");
             
             // تحديد حالة الاشتراك
             $statusEmoji = $subscription->is_trial ? '🎁' : '💎';
@@ -307,9 +328,16 @@ class UserInfoHandler
             $planName = $planNames[$subscription->plan_type] ?? $subscription->plan_type;
             
             // تنسيق التواريخ
+            $this->logger->info("Formatting dates");
             $startDate = $startsAt->format('Y-m-d H:i');
             $endDate = $endsAt->format('Y-m-d H:i');
+            $this->logger->info("Dates formatted", [
+                'start_date' => $startDate,
+                'end_date' => $endDate
+            ]);
             
+            // بناء الرسالة
+            $this->logger->info("Building message");
             $message = "📊 <b>معلومات اشتراكك</b>\n" .
                    "━━━━━━━━━━━━━━━━━━\n\n" .
                    "{$statusEmoji} <b>النوع:</b> {$statusText}\n" .
@@ -332,10 +360,12 @@ class UserInfoHandler
             return $message;
                    
         } catch (\Exception $e) {
-            $this->logger->error("Error in buildSubscriptionDetails", [
+            $this->logger->error("Exception in buildSubscriptionDetails", [
                 'error' => $e->getMessage(),
                 'line' => $e->getLine(),
-                'subscription_id' => $subscription->id ?? 'unknown'
+                'file' => $e->getFile(),
+                'subscription_id' => $subscription->id ?? 'unknown',
+                'trace' => $e->getTraceAsString()
             ]);
             
             // Fallback
