@@ -88,8 +88,8 @@ class TelegramWebhookController extends Controller
         $this->logger->info("Message received", [
             'user_id' => $user->id,
             'chat_id' => $chatId,
-            'has_photo' => $message->has('photo'),
-            'has_text' => $message->has('text')
+            'has_photo' => $message->getPhoto() ? 1 : 0,
+            'has_text' => $message->getText() ? 1 : 0
         ]);
         
         // تفويض المعالجة للـ BotService

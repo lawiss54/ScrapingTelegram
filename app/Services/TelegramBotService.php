@@ -181,7 +181,7 @@ class TelegramBotService
      */
     protected function handleNormalMessage($message, $user, $chatId)
     {
-        if (!$message->has('text')) {
+        if (!$message->getText()) {
             return;
         }
         
