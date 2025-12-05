@@ -8,35 +8,48 @@ use App\Models\User;
 
 class UserInfoHandler
 {
+    /**
+     * Logger لتسجيل الأخطاء والأحداث.
+     *
+     * @var TelegramLogger
+     */
     protected TelegramLogger $logger;
-    
+
+    /**
+     * Inject logger.
+     */
     public function __construct(TelegramLogger $logger)
     {
         $this->logger = $logger;
     }
-    
+
     /**
-     * عرض حالة الاشتراك (من Command)
+     * عرض حالة الاشتراك عند تنفيذ "/status".
+     *
+     * @param User $user
+     * @param int  $chatId
      */
     public function showStatus($user, $chatId)
     {
-        
         $subscription = $user->activeSubscription;
 
+        // المستخدم بدون اشتراك
         if (!$subscription) {
             $this->sendNoSubscriptionStatus($chatId);
             return;
         }
 
+        // حساب الأيام المتبقية
         $daysLeft = now()->diffInDays($subscription->ends_at, false);
         $daysLeft = max(0, (int) ceil($daysLeft));
-        
+
+        // نوع الاشتراك
         $statusEmoji = $subscription->is_trial ? '🎁' : '💎';
-        $statusText = $subscription->is_trial ? 'تجريبي' : 'مدفوع';
-        
+        $statusText  = $subscription->is_trial ? 'تجريبي' : 'مدفوع';
+
         Telegram::sendMessage([
-            'chat_id' => $chatId,
-            'text' => 
+            'chat_id'    => $chatId,
+            'text'       =>
                 "📊 <b>حالة اشتراكك</b>\n\n" .
                 "━━━━━━━━━━━━━━━━━━\n" .
                 "✅ نشط\n" .
@@ -48,44 +61,39 @@ class UserInfoHandler
             'parse_mode' => 'HTML',
             'reply_markup' => json_encode([
                 'inline_keyboard' => [
-                    [
-                        ['text' => '📊 تفاصيل أكثر', 'callback_data' => 'subscription_info']
-                    ],
-                    [
-                        ['text' => '🏠 القائمة الرئيسية', 'callback_data' => 'back_to_start']
-                    ]
-                ]
-            ])
+                    [['text' => '📊 تفاصيل أكثر', 'callback_data' => 'subscription_info']],
+                    [['text' => '🏠 القائمة الرئيسية', 'callback_data' => 'back_to_start']],
+                ],
+            ]),
         ]);
     }
-    
+
     /**
-     * رسالة: لا يوجد اشتراك (من Command)
+     * رسالة: لا يوجد اشتراك عند تنفيذ "/status".
      */
     protected function sendNoSubscriptionStatus($chatId)
     {
         Telegram::sendMessage([
             'chat_id' => $chatId,
-            'text' => 
+            'text'    =>
                 "⚠️ ليس لديك اشتراك نشط حالياً\n\n" .
                 "للبدء في استخدام البوت، استخدم /start",
             'reply_markup' => json_encode([
                 'inline_keyboard' => [
-                    [['text' => '🚀 ابدأ الآن', 'callback_data' => 'back_to_start']]
-                ]
-            ])
+                    [['text' => '🚀 ابدأ الآن', 'callback_data' => 'back_to_start']],
+                ],
+            ]),
         ]);
     }
-    
+
     /**
-     * بدء استخدام البوت
+     * بدء استخدام البوت — ردّ على زر "start_using".
      */
     public function handleStartUsing($user, $chatId, $callbackId)
     {
-        
         Telegram::sendMessage([
             'chat_id' => $chatId,
-            'text' =>
+            'text'    =>
                 "🚀 مرحباً بك!\n\n" .
                 "الأوامر المتاحة:\n" .
                 "/status - حالة الاشتراك\n" .
@@ -96,18 +104,16 @@ class UserInfoHandler
 
         Telegram::answerCallbackQuery(['callback_query_id' => $callbackId]);
     }
-    
+
     /**
-     * عرض المساعدة
+     * عرض قائمة المساعدة.
      */
     public function showHelp($chatId, $callbackId = null)
     {
-        
-        
         Telegram::sendMessage([
             'chat_id' => $chatId,
-            'text' =>
-                "❓ المساعدة\n\n" .
+            'text'    =>
+                "❓ <b>المساعدة</b>\n\n" .
                 "الأوامر المتاحة:\n" .
                 "━━━━━━━━━━━━━━━━━━\n" .
                 "/start - القائمة الرئيسية\n" .
@@ -119,19 +125,21 @@ class UserInfoHandler
                 "📱 @YourSupportBot\n\n" .
                 "⏰ ساعات العمل:\n" .
                 "السبت - الخميس: 9 صباحاً - 5 مساءً",
+            'parse_mode' => 'HTML',
         ]);
 
         if ($callbackId) {
             Telegram::answerCallbackQuery(['callback_query_id' => $callbackId]);
         }
     }
-    
+
     /**
-     * عرض معلومات الاشتراك
+     * عرض تفاصيل الاشتراك (زر "subscription_info").
+     *
+     * يحتوي على fallback إذا حدث خطأ في بناء التفاصيل.
      */
     public function showSubscriptionInfo($user, $chatId, $callbackId)
     {
-        
         try {
             $subscription = $user->activeSubscription;
 
@@ -140,238 +148,196 @@ class UserInfoHandler
                 return;
             }
 
-            
-            // بناء التفاصيل
+            // محاولة بناء التفاصيل الكاملة
             try {
                 $subscriptionDetails = $this->buildSubscriptionDetails($subscription);
-                
-                
             } catch (\Exception $buildError) {
-                
-                // Fallback: رسالة بسيطة
+                // fallback على نسخة بسيطة
                 $subscriptionDetails = $this->buildSimpleSubscriptionDetails($subscription);
             }
-            
-            // إرسال الرسالة
+
+            // محاولة إرسال HTML
             try {
                 Telegram::sendMessage([
-                    'chat_id' => $chatId,
-                    'text' => $subscriptionDetails,
-                    'parse_mode' => 'HTML'
+                    'chat_id'    => $chatId,
+                    'text'       => $subscriptionDetails,
+                    'parse_mode' => 'HTML',
                 ]);
-                
-                
             } catch (\Exception $sendError) {
-                
-                // محاولة بدون HTML
+                // fallback إرسال بدون HTML
                 Telegram::sendMessage([
                     'chat_id' => $chatId,
-                    'text' => strip_tags($subscriptionDetails)
+                    'text'    => strip_tags($subscriptionDetails),
                 ]);
             }
 
             Telegram::answerCallbackQuery(['callback_query_id' => $callbackId]);
-            
         } catch (\Exception $e) {
-            
-            // رسالة خطأ للمستخدم
+            // فشل عام
             Telegram::sendMessage([
                 'chat_id' => $chatId,
-                'text' => '⚠️ حدث خطأ في عرض معلومات الاشتراك. الرجاء المحاولة لاحقاً.'
+                'text'    => '⚠️ حدث خطأ في عرض معلومات الاشتراك. الرجاء المحاولة لاحقاً.',
             ]);
-            
+
             Telegram::answerCallbackQuery([
                 'callback_query_id' => $callbackId,
-                'text' => '⚠️ حدث خطأ',
-                'show_alert' => true
+                'text'              => '⚠️ حدث خطأ',
+                'show_alert'        => true,
             ]);
         }
     }
-    
+
     /**
-     * بناء تفاصيل بسيطة (Fallback)
+     * Fallback: عرض تفاصيل بسيطة عن الاشتراك.
      */
     protected function buildSimpleSubscriptionDetails($subscription): string
     {
         $planNames = [
-            'trial' => 'تجريبي',
-            'monthly' => 'شهري',
-            'quarterly' => 'ربع سنوي',
+            'trial'       => 'تجريبي',
+            'monthly'     => 'شهري',
+            'quarterly'   => 'ربع سنوي',
             'semi_annual' => 'نصف سنوي',
-            'yearly' => 'سنوي',
+            'yearly'      => 'سنوي',
         ];
-        
-        $planName = $planNames[$subscription->plan_type] ?? $subscription->plan_type;
+
+        $planName    = $planNames[$subscription->plan_type] ?? $subscription->plan_type;
         $statusEmoji = $subscription->is_trial ? '🎁' : '💎';
-        $statusText = $subscription->is_trial ? 'تجريبي' : 'مدفوع';
-        
+        $statusText  = $subscription->is_trial ? 'تجريبي' : 'مدفوع';
+
+        // حساب الأيام المتبقية
         $remainingDays = 0;
         try {
             $remainingDays = now()->diffInDays($subscription->ends_at, false);
             $remainingDays = max(0, (int) ceil($remainingDays));
         } catch (\Exception $e) {
-            // تجاهل خطأ التاريخ
+            // تجاهل أي خطأ في التواريخ
         }
-        
-        return "📊 معلومات اشتراكك\n\n" .
-               "{$statusEmoji} النوع: {$statusText}\n" .
-               "📦 الخطة: {$planName}\n" .
-               "💰 السعر: \${$subscription->price}\n" .
-               "⏰ متبقي: {$remainingDays} يوم\n\n" .
-               "✅ اشتراكك نشط";
+
+        return
+            "📊 <b>معلومات اشتراكك</b>\n\n" .
+            "{$statusEmoji} النوع: {$statusText}\n" .
+            "📦 الخطة: {$planName}\n" .
+            "💰 السعر: \${$subscription->price}\n" .
+            "⏰ المتبقي: {$remainingDays} يوم\n\n" .
+            "✅ اشتراكك نشط";
     }
-    
+
     /**
-     * بناء تفاصيل الاشتراك
+     * بناء تفاصيل اشتراك كاملة (مع progress bar).
      */
     protected function buildSubscriptionDetails($subscription): string
     {
-        // تسجيل بداية العملية
-        
-        try {
-            // معالجة التواريخ بحذر
-            $startsAt = $subscription->starts_at;
-            $endsAt = $subscription->ends_at;
-            
-            
-            if (!$startsAt || !$endsAt) {
-                
-                return $this->buildSimpleSubscriptionDetails($subscription);
-            }
-            
-            // Convert to Carbon if needed
-            if (!($startsAt instanceof \Carbon\Carbon)) {
-                $startsAt = \Carbon\Carbon::parse($startsAt);
-            }
-            
-            if (!($endsAt instanceof \Carbon\Carbon)) {
-                $endsAt = \Carbon\Carbon::parse($endsAt);
-            }
-            
-            
-            $totalDays = $startsAt->diffInDays($endsAt);
-            
-            $passedDays = $startsAt->diffInDays(now());
-            
-            $remainingDays = now()->diffInDays($endsAt, false);
-            $remainingDays = max(0, (int) ceil($remainingDays));
-            
-            $progress = $totalDays > 0 ? ($passedDays / $totalDays) * 100 : 0;
-            $progress = max(0, min(100, $progress)); // بين 0 و 100
-            
-            
-            // بناء شريط التقدم
-            $progressBar = $this->buildProgressBar($progress);
-            
-            // تحديد حالة الاشتراك
-            $statusEmoji = $subscription->is_trial ? '🎁' : '💎';
-            $statusText = $subscription->is_trial ? 'تجريبي' : 'مدفوع';
-            
-            // أسماء الخطط
-            $planNames = [
-                'trial' => 'تجريبي 24 ساعة',
-                'monthly' => 'شهري',
-                'quarterly' => 'ربع سنوي',
-                'semi_annual' => 'نصف سنوي',
-                'yearly' => 'سنوي',
-            ];
-            
-            $planName = $planNames[$subscription->plan_type] ?? $subscription->plan_type;
-            
-            // تنسيق التواريخ
-            $startDate = $startsAt->format('Y-m-d H:i');
-            $endDate = $endsAt->format('Y-m-d H:i');
-            
-            // بناء الرسالة
-            $message = "📊 <b>معلومات اشتراكك</b>\n" .
-                   "━━━━━━━━━━━━━━━━━━\n\n" .
-                   "{$statusEmoji} <b>النوع:</b> {$statusText}\n" .
-                   "📦 <b>الخطة:</b> {$planName}\n" .
-                   "💰 <b>السعر:</b> \${$subscription->price}\n\n" .
-                   "📅 <b>تاريخ البداية:</b>\n" .
-                   "   {$startDate}\n\n" .
-                   "📅 <b>تاريخ الانتهاء:</b>\n" .
-                   "   {$endDate}\n\n" .
-                   "⏰ <b>المتبقي:</b> {$remainingDays} يوم\n\n" .
-                   "📈 <b>التقدم:</b> " . round($progress) . "%\n" .
-                   "{$progressBar}\n" .
-                   "━━━━━━━━━━━━━━━━━━\n\n" .
-                   $this->getSubscriptionWarning($remainingDays);
-            
-            
-            return $message;
-                   
-        } catch (\Exception $e) {
-            
-            // Fallback
+        $startsAt = $subscription->starts_at;
+        $endsAt   = $subscription->ends_at;
+
+        if (!$startsAt || !$endsAt) {
             return $this->buildSimpleSubscriptionDetails($subscription);
         }
+
+        // تحويل التواريخ إذا لم تكن Carbon
+        if (!($startsAt instanceof \Carbon\Carbon)) {
+            $startsAt = \Carbon\Carbon::parse($startsAt);
+        }
+
+        if (!($endsAt instanceof \Carbon\Carbon)) {
+            $endsAt = \Carbon\Carbon::parse($endsAt);
+        }
+
+        // الحسابات
+        $totalDays     = $startsAt->diffInDays($endsAt);
+        $passedDays    = $startsAt->diffInDays(now());
+        $remainingDays = max(0, (int) ceil(now()->diffInDays($endsAt, false)));
+        $progress      = $totalDays > 0 ? ($passedDays / $totalDays) * 100 : 0;
+        $progress      = max(0, min(100, $progress));
+
+        // progress bar
+        $progressBar = $this->buildProgressBar($progress);
+
+        // نوع الخطة
+        $planNames = [
+            'trial'       => 'تجريبي 24 ساعة',
+            'monthly'     => 'شهري',
+            'quarterly'   => 'ربع سنوي',
+            'semi_annual' => 'نصف سنوي',
+            'yearly'      => 'سنوي',
+        ];
+
+        $planName    = $planNames[$subscription->plan_type] ?? $subscription->plan_type;
+        $statusEmoji = $subscription->is_trial ? '🎁' : '💎';
+        $statusText  = $subscription->is_trial ? 'تجريبي' : 'مدفوع';
+
+        // التواريخ
+        $startDate = $startsAt->format('Y-m-d H:i');
+        $endDate   = $endsAt->format('Y-m-d H:i');
+
+        return
+            "📊 <b>معلومات اشتراكك</b>\n" .
+            "━━━━━━━━━━━━━━━━━━\n\n" .
+            "{$statusEmoji} <b>النوع:</b> {$statusText}\n" .
+            "📦 <b>الخطة:</b> {$planName}\n" .
+            "💰 <b>السعر:</b> \${$subscription->price}\n\n" .
+            "📅 <b>تاريخ البداية:</b>\n   {$startDate}\n\n" .
+            "📅 <b>تاريخ الانتهاء:</b>\n   {$endDate}\n\n" .
+            "⏰ <b>المتبقي:</b> {$remainingDays} يوم\n\n" .
+            "📈 <b>التقدم:</b> " . round($progress) . "%\n" .
+            "{$progressBar}\n\n" .
+            "━━━━━━━━━━━━━━━━━━\n\n" .
+            $this->getSubscriptionWarning($remainingDays);
     }
-    
+
     /**
-     * بناء شريط التقدم
+     * إنشاء progress bar من 10 مربعات.
      */
     protected function buildProgressBar(float $progress): string
     {
         $filledBlocks = (int) round($progress / 10);
-        $emptyBlocks = 10 - $filledBlocks;
-        
+        $emptyBlocks  = 10 - $filledBlocks;
+
         return str_repeat('▓', $filledBlocks) . str_repeat('░', $emptyBlocks);
     }
-    
+
     /**
-     * الحصول على تحذير الاشتراك
+     * تحذيرات أو تنبيهات حسب الأيام المتبقية.
      */
     protected function getSubscriptionWarning(int $remainingDays): string
     {
         if ($remainingDays <= 0) {
-            return "⚠️ <b>انتهى الاشتراك!</b>\n" .
-                   "يرجى تجديد الاشتراك للاستمرار في الاستخدام.";
+            return "⚠️ <b>انتهى الاشتراك!</b>\nيرجى التجديد للاستمرار في الاستخدام.";
         }
-        
+
         if ($remainingDays <= 3) {
-            return "⚠️ <b>تحذير:</b> اشتراكك ينتهي خلال {$remainingDays} يوم!\n" .
-                   "يُنصح بالتجديد قريباً.";
+            return "⚠️ <b>اشتراكك ينتهي خلال {$remainingDays} يوم!</b>\nننصح بالتجديد قريباً.";
         }
-        
+
         if ($remainingDays <= 7) {
             return "💡 <b>تذكير:</b> اشتراكك ينتهي خلال أسبوع.";
         }
-        
-        return "✅ اشتراكك نشط ومستمر!";
+
+        return "✅ اشتراكك نشط.";
     }
-    
+
     /**
-     * رسالة: لا يوجد اشتراك نشط
+     * رسالة عند عدم وجود اشتراك نشط (زر "subscription_info").
      */
     protected function sendNoSubscriptionMessage($chatId, $callbackId)
     {
         $keyboard = [
             'inline_keyboard' => [
-                [
-                    ['text' => '🎁 فترة تجريبية', 'callback_data' => 'trial_24h']
-                ],
-                [
-                    ['text' => '💎 الاشتراك المدفوع', 'callback_data' => 'show_subscriptions']
-                ],
-                [
-                    ['text' => '🏠 القائمة الرئيسية', 'callback_data' => 'back_to_start']
-                ]
-            ]
+                [['text' => '🎁 فترة تجريبية',       'callback_data' => 'trial_24h']],
+                [['text' => '💎 الاشتراك المدفوع',   'callback_data' => 'show_subscriptions']],
+                [['text' => '🏠 القائمة الرئيسية',   'callback_data' => 'back_to_start']],
+            ],
         ];
-        
+
         Telegram::sendMessage([
             'chat_id' => $chatId,
-            'text' => 
+            'text'    =>
                 "⚠️ <b>ليس لديك اشتراك نشط</b>\n\n" .
-                "للاستفادة من جميع مميزات البوت،\n" .
-                "يمكنك اختيار:\n\n" .
-                "🎁 فترة تجريبية مجانية لمدة 24 ساعة\n" .
-                "💎 أو الاشتراك المدفوع مباشرة",
-            'parse_mode' => 'HTML',
-            'reply_markup' => json_encode($keyboard)
+                "استفد من الفترة التجريبية أو اشترك للاستفادة من كامل المميزات.",
+            'parse_mode'   => 'HTML',
+            'reply_markup' => json_encode($keyboard),
         ]);
-        
+
         Telegram::answerCallbackQuery(['callback_query_id' => $callbackId]);
     }
 }

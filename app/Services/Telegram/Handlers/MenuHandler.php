@@ -8,103 +8,143 @@ use App\Models\User;
 
 class MenuHandler
 {
+    /**
+     * Logger مخصص لتتبع الأحداث والعمليات داخل قوائم البوت.
+     *
+     * @var TelegramLogger
+     */
     protected TelegramLogger $logger;
-    
+
+    /**
+     * حقن الـ Logger داخل الخدمة.
+     *
+     * @param TelegramLogger $logger
+     */
     public function __construct(TelegramLogger $logger)
     {
         $this->logger = $logger;
     }
-    
+
     /**
-     * العودة للقائمة الرئيسية
+     * الرجوع للقائمة الأساسية حسب حالة المستخدم:
+     * - إذا عنده اشتراك نشط: نعرض له قائمة المستخدم المشترك.
+     * - إذا ما عندوش اشتراك: نعرض له قائمة الترحيب.
+     *
+     * @param User   $user
+     * @param int    $chatId
+     * @param int    $messageId
+     * @param string $callbackId
      */
     public function backToStart($user, $chatId, $messageId, $callbackId)
     {
-        
+        // تحديد القائمة المناسبة
         if ($user->hasActiveSubscription()) {
             $this->showActiveSubscriptionMenu($user, $chatId, $messageId);
         } else {
             $this->showWelcomeMenu($user, $chatId, $messageId);
         }
-        
-        Telegram::answerCallbackQuery(['callback_query_id' => $callbackId]);
+
+        // إلغاء تحميل زر الكولباك لدى المستخدم
+        Telegram::answerCallbackQuery([
+            'callback_query_id' => $callbackId,
+        ]);
     }
-    
+
     /**
-     * قائمة الترحيب (بدون اشتراك)
+     * قائمة الترحيب للمستخدمين بدون اشتراك.
+     *
+     * - تعرض اسم المستخدم.
+     * - تعطيه خيار تجربة مجانية أو اشتراك مدفوع.
+     *
+     * @param User $user
+     * @param int  $chatId
+     * @param int  $messageId
      */
     protected function showWelcomeMenu($user, $chatId, $messageId)
     {
+        // حماية الاسم من أي رموز ممكن تكسر HTML
         $firstName = htmlspecialchars($user->first_name ?? 'مستخدم', ENT_QUOTES, 'UTF-8');
-        
-        $message = "🎉 مرحباً بك <b>{$firstName}</b>!\n\n"
-            . "أهلاً بك في البوت الخاص بنا 🤖\n\n"
-            . "للبدء في استخدام البوت، يمكنك اختيار:\n\n"
-            . "🎁 تجربة مجانية لمدة 24 ساعة\n"
-            . "💎 أو الاشتراك المباشر للحصول على جميع المميزات\n\n"
-            . "اختر ما يناسبك:";
-        
+
+        $message =
+            "🎉 مرحباً بك <b>{$firstName}</b>!\n\n" .
+            "أهلاً بك في البوت الخاص بنا 🤖\n\n" .
+            "للبدء في استخدام البوت، يمكنك اختيار:\n\n" .
+            "🎁 تجربة مجانية لمدة 24 ساعة\n" .
+            "💎 أو الاشتراك المباشر للحصول على جميع المميزات\n\n" .
+            "اختر ما يناسبك:";
+
+        // أزرار التفاعل
         $keyboard = [
             'inline_keyboard' => [
                 [
-                    ['text' => '🎁 فترة تجريبية 24 ساعة', 'callback_data' => 'trial_24h']
+                    ['text' => '🎁 فترة تجريبية 24 ساعة', 'callback_data' => 'trial_24h'],
                 ],
                 [
-                    ['text' => '💎 الاشتراك المدفوع', 'callback_data' => 'show_subscriptions']
-                ]
-            ]
+                    ['text' => '💎 الاشتراك المدفوع', 'callback_data' => 'show_subscriptions'],
+                ],
+            ],
         ];
-        
+
+        // تعديل الرسالة الحالية في الدردشة
         Telegram::editMessageText([
-            'chat_id' => $chatId,
-            'message_id' => $messageId,
-            'text' => $message,
-            'parse_mode' => 'HTML',
-            'reply_markup' => json_encode($keyboard)
+            'chat_id'      => $chatId,
+            'message_id'   => $messageId,
+            'text'         => $message,
+            'parse_mode'   => 'HTML',
+            'reply_markup' => json_encode($keyboard),
         ]);
     }
-    
+
     /**
-     * قائمة المستخدم النشط (مع اشتراك)
+     * عرض قائمة المستخدم المشترك (صاحب اشتراك نشط أو تجريبي).
+     *
+     * @param User $user
+     * @param int  $chatId
+     * @param int  $messageId
      */
     protected function showActiveSubscriptionMenu($user, $chatId, $messageId)
     {
         $subscription = $user->activeSubscription;
+
+        // حساب الأيام المتبقية، وضمان عدم ظهور رقم سلبي
         $daysLeft = now()->diffInDays($subscription->ends_at, false);
         $daysLeft = max(0, (int) ceil($daysLeft));
-        
-        $firstName = htmlspecialchars($user->first_name ?? 'مستخدم', ENT_QUOTES, 'UTF-8');
-        $planType = $subscription->plan_type ?? 'غير محدد';
-        $price = number_format($subscription->price ?? 0, 2);
-        $subscriptionEmoji = $subscription->is_trial ? '🎁' : '💎';
+
+        // تجهيز البيانات
+        $firstName          = htmlspecialchars($user->first_name ?? 'مستخدم', ENT_QUOTES, 'UTF-8');
+        $planType           = $subscription->plan_type ?? 'غير محدد';
+        $price              = number_format($subscription->price ?? 0, 2);
+        $subscriptionEmoji  = $subscription->is_trial ? '🎁' : '💎';
         $subscriptionStatus = $subscription->is_trial ? 'تجريبي' : 'مدفوع';
-        
-        $message = "✅ مرحباً <b>{$firstName}</b>!\n\n"
-            . "اشتراكك نشط ✨\n\n"
-            . "{$subscriptionEmoji} النوع: {$subscriptionStatus}\n"
-            . "📦 الخطة: {$planType}\n"
-            . "📅 متبقي: <b>{$daysLeft}</b> يوم\n"
-            . "💰 السعر: \${$price}\n\n"
-            . "يمكنك الآن استخدام جميع مميزات البوت! 🎉";
-        
+
+        $message =
+            "✅ مرحباً <b>{$firstName}</b>!\n\n" .
+            "اشتراكك نشط ✨\n\n" .
+            "{$subscriptionEmoji} النوع: {$subscriptionStatus}\n" .
+            "📦 الخطة: {$planType}\n" .
+            "📅 متبقي: <b>{$daysLeft}</b> يوم\n" .
+            "💰 السعر: \${$price}\n\n" .
+            "يمكنك الآن استخدام جميع مميزات البوت! 🎉";
+
         $keyboard = [
             'inline_keyboard' => [
                 [
                     ['text' => '🚀 بدء الاستخدام', 'callback_data' => 'start_using'],
-                    ['text' => '❓ مساعدة', 'callback_data' => 'help']
+                    ['text' => '❓ مساعدة', 'callback_data' => 'help'],
                 ],
                 [
-                    ['text' => '📊 معلومات الاشتراك', 'callback_data' => 'subscription_info']
-                ]
-            ]
+                    ['text' => '📊 معلومات الاشتراك', 'callback_data' => 'subscription_info'],
+                ],
+            ],
         ];
-        
+
+        // تعديل الرسالة عند نفس المستخدم
         Telegram::editMessageText([
-            'chat_id' => $chatId,
-            'message_id' => $messageId,
-            'text' => $message,
-            'parse_mode' => 'HTML',
-            'reply_markup' => json_encode($keyboard)
+            'chat_id'      => $chatId,
+            'message_id'   => $messageId,
+            'text'         => $message,
+            'parse_mode'   => 'HTML',
+            'reply_markup' => json_encode($keyboard),
         ]);
     }
 }

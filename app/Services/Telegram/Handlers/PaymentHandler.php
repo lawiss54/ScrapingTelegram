@@ -8,117 +8,141 @@ use App\Models\{User, VerificationRequest};
 
 class PaymentHandler
 {
+    /**
+     * Logger used for debugging and tracking user payment flow.
+     *
+     * @var TelegramLogger
+     */
     protected TelegramLogger $logger;
-    
+
+    /**
+     * Inject Logger instance.
+     *
+     * @param TelegramLogger $logger
+     */
     public function __construct(TelegramLogger $logger)
     {
         $this->logger = $logger;
     }
-    
+
     /**
-     * طلب إثبات الدفع (الخطوة 1: صورة)
+     * Step 1 — Ask user to send payment proof (image only).
+     *
+     * - Store user current state in cache.
+     * - Store selected plan.
+     * - Instruct user to send a photo.
+     *
+     * @param string $data
+     * @param User   $user
+     * @param int    $chatId
+     * @param string $callbackId
      */
     public function requestPaymentProof($data, $user, $chatId, $callbackId)
     {
+        // Extract plan type from callback_data
         $planType = str_replace('confirm_payment_', '', $data);
-        
-        
-        // تعيين حالة المستخدم
+
+        // Set user state for 1 hour
         cache()->put("user_state_{$chatId}", 'waiting_payment_proof', now()->addHours(1));
         cache()->put("selected_plan_{$chatId}", $planType, now()->addHours(1));
 
         $keyboard = [
             'inline_keyboard' => [
-                [['text' => '❌ إلغاء العملية', 'callback_data' => 'cancel_payment']]
+                [
+                    ['text' => '❌ إلغاء العملية', 'callback_data' => 'cancel_payment']
+                ]
             ]
         ];
 
+        // Send instructions to user
         Telegram::sendMessage([
-            'chat_id' => $chatId,
+            'chat_id'      => $chatId,
+            'text'         =>
                 "📸 <b>الخطوة 1 من 2:</b> إرسال إثبات الدفع\n\n" .
-                "الرجاء إرسال صورة ( لا ترسل ملف صورة فقط ) توضح:\n" .
-                "• إيصال الدفع 📷\n" .
-                "• لقطة شاشة من التحويل 📱\n" .
-                "• أي إثبات للعملية 🧾\n\n" .
-                "⚠️ تأكد من وضوح الصورة!\n\n" .
-                "💡 <i>بعد إرسال الصورة، اكمل الخطوة 2</i>",
-            'text' =>'parse_mode' => 'HTML',
-            'reply_markup' => json_encode($keyboard)
+                "الرجاء إرسال صورة (لا ترسل ملف فقط)\n\n" .
+                "✔ إيصال الدفع\n" .
+                "✔ لقطة شاشة من التحويل\n" .
+                "✔ أي إثبات للعملية\n\n" .
+                "⚠️ تأكد من وضوح الصورة\n\n" .
+                "<i>بعد إرسال الصورة سيتم الانتقال للخطوة التالية</i>",
+            'parse_mode'   => 'HTML',
+            'reply_markup' => json_encode($keyboard),
         ]);
 
+        // Stop loading animation for user
         Telegram::answerCallbackQuery([
             'callback_query_id' => $callbackId,
-            'text' => '📸 أرسل صورة إثبات الدفع الآن',
+            'text'              => '📸 أرسل صورة إثبات الدفع الآن',
         ]);
     }
-    
+
     /**
-     * معالجة إثبات الدفع (صورة + رقم عملية)
+     * General handler for incoming photos / messages during payment workflow.
+     *
+     * - Step 1: receive image
+     * - Step 2: receive transaction ID
+     *
+     * @param mixed $message
+     * @param User  $user
      */
     public function handlePaymentProof($message, User $user)
     {
-        $chatId = $message->getChat()->getId();
+        $chatId    = $message->getChat()->getId();
         $userState = cache()->get("user_state_{$chatId}");
-        
-        // 🔍 DEBUG: فحص Message object
+
         $photos = $message->getPhoto();
-        $text = $message->getText();
-        
-        // التحقق من الحالة
+        $text   = $message->getText();
+
+        // Ignore if user is not in payment workflow
         if (!in_array($userState, ['waiting_payment_proof', 'waiting_transaction_id'])) {
             return;
         }
-        
-        // الخطوة 1: استلام الصورة
+
+        // Step 1: waiting for image
         if ($userState === 'waiting_payment_proof') {
-            
-            
-            // ✅ التحقق الصحيح: استخدام empty() بدلاً من is_array()
             if ($photos && !empty($photos)) {
-                $photoCount = is_countable($photos) ? count($photos) : 'unknown';
                 $this->handlePaymentImage($message, $user, $chatId);
             } else {
                 $this->requestValidImage($chatId);
             }
             return;
         }
-        
-        // الخطوة 2: استلام رقم العملية
+
+        // Step 2: waiting for text (transaction id)
         if ($userState === 'waiting_transaction_id') {
-            
-            // التحقق من أن الرسالة نص فقط (بدون صورة)
             if ($text && empty($photos)) {
-                
                 $this->handleTransactionId($message, $user, $chatId);
             } else {
-                
                 $this->requestValidTransactionId($chatId);
             }
             return;
         }
     }
-    
+
     /**
-     * معالجة صورة الدفع
+     * Process payment proof (image).
+     *
+     * @param mixed $message
+     * @param User  $user
+     * @param int   $chatId
      */
     protected function handlePaymentImage($message, User $user, $chatId)
     {
         try {
             $photos = $message->getPhoto();
-            
-            // التحقق من وجود الصور
+
+            // Validate photo exists
             if (empty($photos)) {
-                
                 $this->requestValidImage($chatId);
                 return;
             }
-            
-            // الحصول على أكبر حجم صورة
-            // $photos يمكن أن يكون array of objects أو array of arrays
+
+            // Get the highest resolution image (last one in array)
             $largestPhoto = is_array($photos) ? end($photos) : $photos[count($photos) - 1];
-            
-            // استخراج file_id
+
+            // Extract file_id properly from object or array
             $paymentProof = null;
+
             if (is_object($largestPhoto) && method_exists($largestPhoto, 'getFileId')) {
                 $paymentProof = $largestPhoto->getFileId();
             } elseif (is_array($largestPhoto) && isset($largestPhoto['file_id'])) {
@@ -126,106 +150,98 @@ class PaymentHandler
             } elseif (is_object($largestPhoto) && isset($largestPhoto->file_id)) {
                 $paymentProof = $largestPhoto->file_id;
             }
-            
+
+            // Safety check
             if (!$paymentProof) {
-                
                 Telegram::sendMessage([
                     'chat_id' => $chatId,
-                    'text' => '⚠️ حدث خطأ في معالجة الصورة. الرجاء المحاولة مرة أخرى.'
+                    'text'    => '⚠️ حدث خطأ في معالجة الصورة. الرجاء المحاولة مرة أخرى.'
                 ]);
                 return;
             }
-            
+
+            // Log success
             $this->logger->info("Payment image received successfully", [
                 'user_id' => $user->id,
                 'file_id' => $paymentProof
             ]);
-            
-            // حفظ الصورة وتغيير الحالة
+
+            // Save in cache
             cache()->put("payment_proof_{$chatId}", $paymentProof, now()->addHours(1));
             cache()->put("user_state_{$chatId}", 'waiting_transaction_id', now()->addHours(1));
-            
-            $this->logger->info("Cache updated", [
-                'user_id' => $user->id,
-                'payment_proof' => $paymentProof,
-                'new_state' => 'waiting_transaction_id'
-            ]);
-            
-            $keyboard = [
-                'inline_keyboard' => [
-                    [['text' => '❌ إلغاء العملية', 'callback_data' => 'cancel_payment']]
-                ]
-            ];
-            
+
+            // Send next step instructions
             Telegram::sendMessage([
-                'chat_id' => $chatId,
-                'text' =>
+                'chat_id'    => $chatId,
+                'text'       =>
                     "✅ <b>تم استلام الصورة!</b>\n\n" .
-                    "📝 <b>الخطوة 2 من 2:</b> رقم معاملة  \n\n" .
-                    "الرجاء إرسال رقم العملية (Binance Order ID ) اذا ارسلت بريدي موب اكتب فقط ( بريديموب )\n" .
-                    "مثال: 397732846026694657 ",
+                    "📝 <b>الخطوة 2 من 2:</b> إرسال رقم العملية\n\n" .
+                    "اكتب Binance Order ID أو كلمة (بريدي موب) إذا دفعت عبر البريد.\n" .
+                    "مثال: 397732846026694657",
                 'parse_mode' => 'HTML',
-                'reply_markup' => json_encode($keyboard)
+                'reply_markup' => json_encode([
+                    'inline_keyboard' => [
+                        [['text' => '❌ إلغاء العملية', 'callback_data' => 'cancel_payment']]
+                    ]
+                ])
             ]);
-            
-            
         } catch (\Exception $e) {
-            
             Telegram::sendMessage([
                 'chat_id' => $chatId,
-                'text' => '⚠️ حدث خطأ في معالجة الصورة. الرجاء المحاولة مرة أخرى.'
+                'text'    => '⚠️ حدث خطأ في معالجة الصورة. الرجاء المحاولة مرة أخرى.'
             ]);
         }
     }
+
     /**
-     * معالجة رقم العملية
+     * Process transaction ID and create verification request.
+     *
+     * @param mixed $message
+     * @param User  $user
+     * @param int   $chatId
      */
     protected function handleTransactionId($message, User $user, $chatId)
     {
         $transactionId = $message->getText();
-        $planType = cache()->get("selected_plan_{$chatId}");
-        $paymentProof = cache()->get("payment_proof_{$chatId}");
-        
+        $planType      = cache()->get("selected_plan_{$chatId}");
+        $paymentProof  = cache()->get("payment_proof_{$chatId}");
+
+        // Validate session data
         if (!$planType || !$paymentProof) {
             Telegram::sendMessage([
                 'chat_id' => $chatId,
-                'text' => '⚠️ انتهت جلسة الدفع. الرجاء البدء من جديد.',
+                'text'    => '⚠️ انتهت جلسة الدفع. الرجاء البدء من جديد.',
                 'reply_markup' => json_encode([
                     'inline_keyboard' => [
                         [['text' => '🔄 العودة للقائمة', 'callback_data' => 'back_to_start']]
                     ]
                 ])
             ]);
+
             $this->clearUserCache($chatId);
             return;
         }
-        
-        
+
         try {
-            // إنشاء طلب التحقق
+            // Create new verification request
             $request = $this->createVerificationRequest($user, $planType, $paymentProof, $transactionId);
-            
-            
-            // مسح الحالة
+
+            // Clear session cache
             $this->clearUserCache($chatId);
-            
-            // إرسال للأدمن (with error handling)
+
+            // Notify admins
             try {
                 app(AdminNotificationService::class)->sendVerificationRequest($request);
             } catch (\Exception $adminError) {
-                
-                // نستمر حتى لو فشل إرسال للأدمن
+                // Continue even if admin delivery fails
             }
-            
-            // تأكيد للمستخدم
+
+            // Confirm to user
             $this->sendConfirmationMessage($chatId, $request, $planType, $transactionId);
-            
-            
         } catch (\Exception $e) {
-            
             Telegram::sendMessage([
                 'chat_id' => $chatId,
-                'text' => '⚠️ حدث خطأ في معالجة الطلب. الرجاء المحاولة مرة أخرى.',
+                'text'    => '⚠️ حدث خطأ في معالجة الطلب. الرجاء المحاولة مرة أخرى.',
                 'reply_markup' => json_encode([
                     'inline_keyboard' => [
                         [['text' => '🔄 العودة للقائمة', 'callback_data' => 'back_to_start']]
@@ -234,82 +250,59 @@ class PaymentHandler
             ]);
         }
     }
-    
+
     /**
-     * تخطي رقم العملية
+     * Skip entering transaction ID, continue flow without it.
      */
     public function skipTransactionId($user, $chatId, $callbackId)
     {
         $this->logger->info("Transaction ID skipped - START", ['user_id' => $user->id]);
-        
-        // ✅ Debounce: منع التنفيذ المتعدد
+
+        // Prevent duplicate execution
         $lockKey = "skip_lock_{$user->id}";
-        
+
         if (cache()->has($lockKey)) {
-            $this->logger->warning("Skip already in progress - IGNORED", [
-                'user_id' => $user->id
-            ]);
-            
+            $this->logger->warning("Skip already in progress - IGNORED", ['user_id' => $user->id]);
+
             Telegram::answerCallbackQuery([
                 'callback_query_id' => $callbackId,
-                'text' => '⏳ جاري المعالجة...'
+                'text'              => '⏳ جاري المعالجة...'
             ]);
+
             return;
         }
-        
-        // قفل لمدة 15 ثانية
+
         cache()->put($lockKey, true, now()->addSeconds(15));
-        
+
         try {
-            $planType = cache()->get("selected_plan_{$chatId}");
+            $planType     = cache()->get("selected_plan_{$chatId}");
             $paymentProof = cache()->get("payment_proof_{$chatId}");
-            
-            $this->logger->info("Checking cache for skip", [
-                'user_id' => $user->id,
-                'plan_type' => $planType,
-                'payment_proof' => $paymentProof ? 'exists' : 'missing'
-            ]);
-            
+
             if (!$planType || !$paymentProof) {
-                $this->logger->error("Missing cache data for skip", [
-                    'user_id' => $user->id,
-                    'plan_type' => $planType,
-                    'payment_proof' => $paymentProof
-                ]);
-                
                 Telegram::answerCallbackQuery([
                     'callback_query_id' => $callbackId,
-                    'text' => '⚠️ حدث خطأ. الرجاء المحاولة مرة أخرى',
-                    'show_alert' => true
+                    'text'              => '⚠️ حدث خطأ. حاول من جديد',
+                    'show_alert'        => true
                 ]);
                 return;
             }
-            
-            // إنشاء طلب بدون رقم عملية
+
             $request = $this->createVerificationRequest($user, $planType, $paymentProof, null);
-            
-            $this->logger->info("Verification request created (skipped)", [
-                'request_id' => $request->id,
-                'user_id' => $user->id
-            ]);
-            
-            // مسح الحالة BEFORE sending messages
+
+            // Clear cached workflow
             $this->clearUserCache($chatId);
-            $this->logger->info("Cache cleared after skip", ['user_id' => $user->id]);
-            
-            // إرسال للأدمن
+
             app(AdminNotificationService::class)->sendVerificationRequest($request);
-            $this->logger->info("Sent to admin", ['request_id' => $request->id]);
-            
-            // تأكيد للمستخدم
+
+            // Confirm to user
             Telegram::sendMessage([
-                'chat_id' => $chatId,
-                'text' =>
+                'chat_id'    => $chatId,
+                'text'       =>
                     "✅ <b>تم استلام طلبك!</b>\n\n" .
                     "🔖 رقم الطلب: <code>#{$request->id}</code>\n" .
                     "📦 الخطة: {$planType}\n\n" .
                     "⏳ جاري المراجعة...\n" .
-                    "⏱️ عادة يتم الرد خلال 15-30 دقيقة\n\n" .
+                    "⏱️ الرد عادة بين 15 و30 دقيقة\n\n" .
                     "سنرسل لك إشعاراً فور الموافقة! 🔔",
                 'parse_mode' => 'HTML',
                 'reply_markup' => json_encode([
@@ -318,75 +311,62 @@ class PaymentHandler
                     ]
                 ])
             ]);
-            
-            // ✅ IMPORTANT: Answer callback to stop loading
+
             Telegram::answerCallbackQuery([
                 'callback_query_id' => $callbackId,
-                'text' => '✅ تم إرسال الطلب'
+                'text'              => '✅ تم إرسال الطلب'
             ]);
-            
-            $this->logger->success("Skip transaction completed - END", [
+
+            $this->logger->success("Skip transaction completed", [
                 'request_id' => $request->id,
-                'user_id' => $user->id
+                'user_id'    => $user->id
             ]);
-            
         } catch (\Exception $e) {
-            $this->logger->error("Error in skipTransactionId", [
-                'user_id' => $user->id,
-                'error' => $e->getMessage(),
-                'line' => $e->getLine(),
-                'trace' => $e->getTraceAsString()
-            ]);
-            
             Telegram::answerCallbackQuery([
                 'callback_query_id' => $callbackId,
-                'text' => '⚠️ حدث خطأ. حاول مرة أخرى',
-                'show_alert' => true
+                'text'              => '⚠️ حدث خطأ. حاول مرة أخرى',
+                'show_alert'        => true
             ]);
         } finally {
-            // ✅ إزالة القفل دائماً
             cache()->forget($lockKey);
-            $this->logger->info("Lock released", ['user_id' => $user->id]);
         }
     }
-    
+
     /**
-     * إلغاء عملية الدفع
+     * User cancels payment process.
      */
     public function cancelPayment($user, $chatId, $messageId, $callbackId)
     {
-        
-        // مسح الحالة
         $this->clearUserCache($chatId);
-        
+
         Telegram::editMessageText([
-            'chat_id' => $chatId,
+            'chat_id'    => $chatId,
             'message_id' => $messageId,
-            'text' => 
-                "❌ تم إلغاء عملية الدفع\n\n" .
-                "يمكنك البدء من جديد متى شئت!",
+            'text'       =>
+                "❌ تم إلغاء عملية الدفع.\n\n" .
+                "يمكنك البدء من جديد في أي وقت.",
             'reply_markup' => json_encode([
                 'inline_keyboard' => [
                     [['text' => '🔄 العودة للقائمة', 'callback_data' => 'back_to_start']]
                 ]
             ])
         ]);
-        
+
         Telegram::answerCallbackQuery([
             'callback_query_id' => $callbackId,
-            'text' => '❌ تم الإلغاء'
+            'text'              => '❌ تم الإلغاء'
         ]);
     }
-    
+
     /**
-     * طلب صورة صحيحة
+     * Ask user to send a valid image.
      */
     protected function requestValidImage($chatId)
     {
         Telegram::sendMessage([
             'chat_id' => $chatId,
-            'text' => 
-                "⚠️ الرجاء إرسال صورة إثبات الدفع\n\n" .
+            'text'    =>
+                "⚠️ الرجاء إرسال صورة إثبات الدفع.\n\n" .
                 "📸 يمكنك إرسال:\n" .
                 "• صورة الإيصال\n" .
                 "• لقطة شاشة من التحويل\n" .
@@ -398,16 +378,16 @@ class PaymentHandler
             ])
         ]);
     }
-    
+
     /**
-     * طلب رقم عملية صحيح
+     * Ask for proper transaction ID.
      */
     protected function requestValidTransactionId($chatId)
     {
         Telegram::sendMessage([
             'chat_id' => $chatId,
-            'text' => 
-                "⚠️ الرجاء إرسال رقم العملية كنص فقط\n\n" .
+            'text'    =>
+                "⚠️ الرجاء إرسال رقم العملية كنص فقط.\n\n" .
                 "مثال: TRX123456789",
             'reply_markup' => json_encode([
                 'inline_keyboard' => [
@@ -416,39 +396,39 @@ class PaymentHandler
             ])
         ]);
     }
-    
+
     /**
-     * إنشاء طلب التحقق
+     * Create a new verification request.
      */
     protected function createVerificationRequest(User $user, string $planType, string $paymentProof, ?string $transactionId): VerificationRequest
     {
         return VerificationRequest::create([
-            'user_id' => $user->id,
-            'plan_type' => $planType,
-            'payment_proof' => $paymentProof,
+            'user_id'        => $user->id,
+            'plan_type'      => $planType,
+            'payment_proof'  => $paymentProof,
             'transaction_id' => $transactionId,
-            'status' => 'pending',
+            'status'         => 'pending',
         ]);
     }
-    
+
     /**
-     * إرسال رسالة التأكيد
+     * Send confirmation message to the user.
      */
     protected function sendConfirmationMessage($chatId, VerificationRequest $request, string $planType, ?string $transactionId)
     {
-        $transactionText = $transactionId 
-            ? "🔢 رقم العملية: {$transactionId}\n" 
+        $transactionText = $transactionId
+            ? "🔢 رقم العملية: {$transactionId}\n"
             : "";
-        
+
         Telegram::sendMessage([
-            'chat_id' => $chatId,
-            'text' =>
+            'chat_id'    => $chatId,
+            'text'       =>
                 "✅ <b>تم استلام طلبك!</b>\n\n" .
                 "🔖 رقم الطلب: <code>#{$request->id}</code>\n" .
                 "📦 الخطة: {$planType}\n" .
                 $transactionText . "\n" .
                 "⏳ جاري المراجعة...\n" .
-                "⏱️ عادة يتم الرد خلال 15-30 دقيقة\n\n" .
+                "⏱️ الرد عادة بين 15-30 دقيقة\n\n" .
                 "سنرسل لك إشعاراً فور الموافقة! 🔔",
             'parse_mode' => 'HTML',
             'reply_markup' => json_encode([
@@ -458,9 +438,9 @@ class PaymentHandler
             ])
         ]);
     }
-    
+
     /**
-     * مسح بيانات المستخدم من الـ Cache
+     * Clear user temporary session data from cache.
      */
     protected function clearUserCache($chatId)
     {
