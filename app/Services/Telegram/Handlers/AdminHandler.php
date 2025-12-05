@@ -8,178 +8,228 @@ use App\Models\{VerificationRequest, Subscription};
 
 class AdminHandler
 {
-    /**
-     * Logger داخلي لتتبع كل عمليات الأدمن.
-     *
-     * @var TelegramLogger
-     */
     protected TelegramLogger $logger;
-
-    /**
-     * عدد الأيام لكل خطة اشتراك.
-     */
+    
+    // مدد الخطط بالأيام
     protected array $planDurations = [
-        'monthly'     => 30,
-        'quarterly'   => 90,
+        'monthly' => 30,
+        'quarterly' => 90,
         'semi_annual' => 180,
-        'yearly'      => 365,
+        'yearly' => 365,
     ];
-
-    /**
-     * أسعار كل خطة.
-     */
+    
+    // أسعار الخطط
     protected array $planPrices = [
-        'monthly'     => 10,
-        'quarterly'   => 25,
+        'monthly' => 10,
+        'quarterly' => 25,
         'semi_annual' => 45,
-        'yearly'      => 90,
+        'yearly' => 90,
     ];
-
-    /**
-     * أسماء الخطط بالعربية.
-     */
+    
+    // أسماء الخطط بالعربية
     protected array $planNames = [
-        'monthly'     => 'شهري',
-        'quarterly'   => 'ربع سنوي',
+        'monthly' => 'شهري',
+        'quarterly' => 'ربع سنوي',
         'semi_annual' => 'نصف سنوي',
-        'yearly'      => 'سنوي',
+        'yearly' => 'سنوي',
     ];
-
-    /**
-     * حقن الـ Logger في الخدمة.
-     */
+    
     public function __construct(TelegramLogger $logger)
     {
         $this->logger = $logger;
     }
-
+    
     /**
-     * معالجة طلب الموافقة على الدفع.
-     * - يتحقق من صلاحيات الأدمن
-     * - يتحقق من صحة الطلب
-     * - يوافق على الطلب ويُنشئ اشتراك
-     * - يرسل رسالة ترحيب للمستخدم
-     * - يعدّل رسالة الأدمن
+     * الموافقة على الدفع
      */
     public function approvePayment($data, $callbackQuery)
     {
         $adminId = $callbackQuery->getFrom()->getId();
 
-        // التأكد أن هذا الشخص أدمن
+        // التحقق من صلاحيات الأدمن
         if (!$this->isAdmin($adminId)) {
             $this->sendUnauthorizedMessage($callbackQuery->getId());
             return;
         }
 
-        // استخراج ID الطلب من callback_data
         $requestId = str_replace('approve_', '', $data);
         $request = VerificationRequest::find($requestId);
 
-        // التحقق من أن الطلب موجود ولم تتم معالجته سابقاً
+        // التحقق من صحة الطلب
         if (!$this->isValidRequest($request, $callbackQuery->getId())) {
             return;
         }
-
-        // تحديث حالة الطلب
-        $request->update([
-            'status'      => 'approved',
-            'reviewed_at' => now(),
+        
+        $this->logger->info("Approving payment", [
+            'request_id' => $requestId,
+            'admin_id' => $adminId
         ]);
 
-        // إنشاء اشتراك جديد
-        $subscription = $this->createSubscription($request);
+        try {
+            // تحديث حالة الطلب
+            $request->update([
+                'status' => 'approved',
+                'reviewed_at' => now(),
+            ]);
+            
+            $this->logger->info("Request status updated to approved", [
+                'request_id' => $requestId
+            ]);
 
-        // تفعيل حساب المستخدم
-        $request->user->update(['is_active' => true]);
+            // إنشاء الاشتراك
+            $subscription = $this->createSubscription($request);
+            
+            $this->logger->info("Subscription created", [
+                'subscription_id' => $subscription->id,
+                'user_id' => $request->user_id
+            ]);
 
-        // تحديث الرسالة عند الأدمن
-        $this->updateAdminMessage($callbackQuery, $requestId, $request, 'approved');
+            // تفعيل المستخدم
+            $request->user->update(['is_active' => true]);
 
-        // إرسال رسالة ترحيب للمستخدم
-        $this->sendWelcomeMessage($request->user, $subscription);
+            // تحديث رسالة الأدمن
+            try {
+                Telegram::editMessageText([
+                    'chat_id' => $callbackQuery->getMessage()->getChat()->getId(),
+                    'message_id' => $callbackQuery->getMessage()->getMessageId(),
+                    'text' =>
+                        "✅ <b>تمت الموافقة على الطلب</b>\n\n" .
+                        "🔖 رقم الطلب: <code>#{$requestId}</code>\n" .
+                        "👤 المستخدم: {$request->user->first_name}\n" .
+                        "📦 الخطة: {$request->plan_type}\n" .
+                        "💰 السعر: \${$this->planPrices[$request->plan_type]}\n" .
+                        "⏰ تاريخ الموافقة: " . now()->format('Y-m-d H:i') . "\n" .
+                        "👨‍💼 بواسطة: Admin\n\n" .
+                        "✅ تم تفعيل الاشتراك",
+                    'parse_mode' => 'HTML'
+                ]);
+                
+                $this->logger->info("Admin message updated", ['request_id' => $requestId]);
+                
+            } catch (\Exception $editError) {
+                $this->logger->error("Failed to edit admin message", [
+                    'request_id' => $requestId,
+                    'error' => $editError->getMessage()
+                ]);
+                
+                // إرسال رسالة جديدة بدلاً من التعديل
+                Telegram::sendMessage([
+                    'chat_id' => $callbackQuery->getMessage()->getChat()->getId(),
+                    'text' =>
+                        "✅ <b>تمت الموافقة على الطلب</b>\n\n" .
+                        "🔖 رقم الطلب: <code>#{$requestId}</code>\n" .
+                        "👤 المستخدم: {$request->user->first_name}\n" .
+                        "📦 الخطة: {$request->plan_type}",
+                    'parse_mode' => 'HTML'
+                ]);
+            }
 
-        // رد فوري على ضغط الزر
-        Telegram::answerCallbackQuery([
-            'callback_query_id' => $callbackQuery->getId(),
-            'text'              => '✅ تمت الموافقة',
-        ]);
+            // إرسال رسالة ترحيبية للمستخدم
+            try {
+                $this->sendWelcomeMessage($request->user, $subscription);
+                $this->logger->info("Welcome message sent to user", [
+                    'request_id' => $requestId,
+                    'user_id' => $request->user_id
+                ]);
+            } catch (\Exception $userError) {
+                $this->logger->error("Failed to send welcome message", [
+                    'request_id' => $requestId,
+                    'error' => $userError->getMessage()
+                ]);
+            }
+
+            // الرد على الـ callback
+            Telegram::answerCallbackQuery([
+                'callback_query_id' => $callbackQuery->getId(),
+                'text' => '✅ تمت الموافقة',
+            ]);
+            
+            $this->logger->success("Payment approved successfully", [
+                'request_id' => $requestId,
+                'subscription_id' => $subscription->id
+            ]);
+            
+        } catch (\Exception $e) {
+            $this->logger->error("Error in approvePayment", [
+                'request_id' => $requestId,
+                'error' => $e->getMessage(),
+                'line' => $e->getLine(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            Telegram::answerCallbackQuery([
+                'callback_query_id' => $callbackQuery->getId(),
+                'text' => '⚠️ حدث خطأ في الموافقة',
+                'show_alert' => true
+            ]);
+        }
     }
-
+    
     /**
-     * معالجة طلب الرفض:
-     * - يتحقق من الصلاحيات
-     * - يتحقق من صحة الطلب
-     * - يرفض الطلب
-     * - يُحدّث الرسالة عند الأدمن
-     * - يرسل رسالة توضيحية للمستخدم
+     * رفض الدفع
      */
     public function rejectPayment($data, $callbackQuery)
     {
         $adminId = $callbackQuery->getFrom()->getId();
 
+        // التحقق من صلاحيات الأدمن
         if (!$this->isAdmin($adminId)) {
-            $this->logger->info("is npt admin", ['user_id' => $adminId]);
-
             $this->sendUnauthorizedMessage($callbackQuery->getId());
             return;
         }
 
         $requestId = str_replace('reject_', '', $data);
         $request = VerificationRequest::find($requestId);
-        $this->logger->info("request data", ['rrquest' => $request]);
 
-
+        // التحقق من صحة الطلب
         if (!$this->isValidRequest($request, $callbackQuery->getId())) {
             return;
         }
-        $this->logger->info("start change status", ['rrquest' => $request]);
+        
+        $this->logger->info("Rejecting payment", [
+            'request_id' => $requestId,
+            'admin_id' => $adminId
+        ]);
 
-
-        // تغيير حالة الطلب إلى "مرفوض"
+        // تحديث حالة الطلب
         $request->update([
-            'status'      => 'rejected',
+            'status' => 'rejected',
             'reviewed_at' => now(),
         ]);
-        $request->save();
-        $this->logger->info("end update status", ['rrquest' => $request]);
 
-
-        // تحديث الرسالة للأدمن
-        $this->logger->info("start update admine message");
-        $this->logger->info("start update admine message", ['callbackQuery' => $callbackQuery, 'requestId' => $requestId, 'request' => $request]);
-        
+        // تحديث رسالة الأدمن
         $this->updateAdminMessage($callbackQuery, $requestId, $request, 'rejected');
 
-        // إعلام المستخدم بالرفض
-        $this->logger->info("start send message ro client", ['rrquest' => $request]);
-
+        // إرسال رسالة رفض للمستخدم
         $this->sendRejectionMessage($request);
 
         Telegram::answerCallbackQuery([
             'callback_query_id' => $callbackQuery->getId(),
-            'text'              => '❌ تم الرفض',
+            'text' => '❌ تم الرفض',
         ]);
+        
+        $this->logger->warning("Payment rejected", ['request_id' => $requestId]);
     }
-
+    
     /**
-     * إنشاء اشتراك جديد بناءً على طلب الدفع.
+     * إنشاء اشتراك جديد
      */
     protected function createSubscription(VerificationRequest $request): Subscription
     {
         return Subscription::create([
-            'user_id'   => $request->user_id,
+            'user_id' => $request->user_id,
             'plan_type' => $request->plan_type,
-            'price'     => $this->planPrices[$request->plan_type],
+            'price' => $this->planPrices[$request->plan_type],
             'starts_at' => now(),
-            'ends_at'   => now()->addDays($this->planDurations[$request->plan_type]),
+            'ends_at' => now()->addDays($this->planDurations[$request->plan_type]),
             'is_active' => true,
-            'is_trial'  => false,
-            'status'    => 'active',
+            'is_trial' => false,
+            'status' => 'active',
         ]);
     }
-
+    
     /**
-     * إرسال رسالة ترحيبية بعد الموافقة.
+     * إرسال رسالة ترحيبية بعد الموافقة
      */
     protected function sendWelcomeMessage($user, Subscription $subscription)
     {
@@ -188,18 +238,18 @@ class AdminHandler
         $keyboard = [
             'inline_keyboard' => [
                 [
-                    ['text' => '🚀 بدء الاستخدام', 'callback_data' => 'start_using'],
+                    ['text' => '🚀 بدء الاستخدام', 'callback_data' => 'start_using']
                 ],
                 [
                     ['text' => '📊 معلومات الاشتراك', 'callback_data' => 'subscription_info'],
-                    ['text' => '❓ مساعدة', 'callback_data' => 'help'],
-                ],
-            ],
+                    ['text' => '❓ مساعدة', 'callback_data' => 'help']
+                ]
+            ]
         ];
 
         Telegram::sendMessage([
             'chat_id' => $user->telegram_id,
-            'text'    =>
+            'text' =>
                 "🎉 مبروك! تم تفعيل اشتراكك\n\n" .
                 "📋 معلومات الاشتراك:\n" .
                 "━━━━━━━━━━━━━━━━━━\n" .
@@ -213,15 +263,15 @@ class AdminHandler
             'reply_markup' => json_encode($keyboard),
         ]);
     }
-
+    
     /**
-     * إرسال رسالة الرفض للمستخدم.
+     * إرسال رسالة رفض للمستخدم
      */
     protected function sendRejectionMessage(VerificationRequest $request)
     {
         Telegram::sendMessage([
             'chat_id' => $request->user->telegram_id,
-            'text'    =>
+            'text' =>
                 "❌ لم يتم قبول طلب الدفع\n\n" .
                 "🔖 رقم الطلب: #{$request->id}\n" .
                 "الأسباب المحتملة:\n" .
@@ -231,63 +281,41 @@ class AdminHandler
                 "💬 يمكنك إعادة المحاولة أو التواصل مع الدعم",
         ]);
     }
-
+    
     /**
-     * تحديث رسالة الأدمن بعد الموافقة أو الرفض.
-     */
-    protected function updateAdminMessage($callbackQuery, $requestId, $request, $status)
-    {
-        $statusEmoji = $status === 'approved' ? '✅' : '❌';
-        $statusText  = $status === 'approved'
-            ? 'تمت الموافقة على'
-            : 'تم رفض';
-
-        Telegram::editMessageText([
-            'chat_id'    => $callbackQuery->getMessage()->getChat()->getId(),
-            'message_id' => $callbackQuery->getMessage()->getMessageId(),
-            'text'       =>
-                "{$statusEmoji} {$statusText} الطلب #{$requestId}\n" .
-                "المستخدم: {$request->user->first_name}\n" .
-                "الخطة: {$request->plan_type}\n" .
-                "بواسطة: Admin",
-        ]);
-    }
-
-    /**
-     * التأكد أن المستخدم أدمن.
+     * التحقق من صلاحيات الأدمن
      */
     protected function isAdmin($telegramId): bool
     {
         return in_array($telegramId, config('telegram.bots.mybot.admin_ids', []));
     }
-
+    
     /**
-     * التحقق من صحة الطلب.
+     * التحقق من صحة الطلب
      */
     protected function isValidRequest(?VerificationRequest $request, $callbackId): bool
     {
         if (!$request || $request->status !== 'pending') {
             Telegram::answerCallbackQuery([
                 'callback_query_id' => $callbackId,
-                'text'              => '⚠️ تمت المعالجة مسبقاً',
-                'show_alert'        => true,
+                'text' => '⚠️ تمت المعالجة مسبقاً',
+                'show_alert' => true,
             ]);
-
             return false;
         }
-
+        
         return true;
     }
-
+    
     /**
-     * إرسال رسالة "غير مصرح" عند محاولة شخص ليس أدمن.
+     * رسالة: غير مصرح
      */
     protected function sendUnauthorizedMessage($callbackId)
     {
         Telegram::answerCallbackQuery([
             'callback_query_id' => $callbackId,
-            'text'              => '❌ غير مصرح لك',
-            'show_alert'        => true,
+            'text' => '❌ غير مصرح لك',
+            'show_alert' => true,
         ]);
     }
 }
