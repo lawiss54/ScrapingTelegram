@@ -22,8 +22,8 @@ class AdminNotificationService
             $this->logger->error("No admin IDs configured");
             return;
         }
+        $user = User::find($request->user_id);
 
-        $user = $request->user;
         $this->logger->info("user info", [
             'user_info' => $user,
             'admin_ids' => $adminIds,
