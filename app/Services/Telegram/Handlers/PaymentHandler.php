@@ -22,10 +22,6 @@ class PaymentHandler
     {
         $planType = str_replace('confirm_payment_', '', $data);
         
-        $this->logger->info("Requesting payment proof", [
-            'user_id' => $user->id,
-            'plan' => $planType
-        ]);
         
         // تعيين حالة المستخدم
         cache()->put("user_state_{$chatId}", 'waiting_payment_proof', now()->addHours(1));
@@ -39,15 +35,14 @@ class PaymentHandler
 
         Telegram::sendMessage([
             'chat_id' => $chatId,
-            'text' =>
                 "📸 <b>الخطوة 1 من 2:</b> إرسال إثبات الدفع\n\n" .
-                "الرجاء إرسال صورة توضح:\n" .
+                "الرجاء إرسال صورة ( لا ترسل ملف صورة فقط ) توضح:\n" .
                 "• إيصال الدفع 📷\n" .
                 "• لقطة شاشة من التحويل 📱\n" .
                 "• أي إثبات للعملية 🧾\n\n" .
                 "⚠️ تأكد من وضوح الصورة!\n\n" .
-                "💡 <i>بعد إرسال الصورة، سنطلب منك رقم العملية</i>",
-            'parse_mode' => 'HTML',
+                "💡 <i>بعد إرسال الصورة، اكمل الخطوة 2</i>",
+            'text' =>'parse_mode' => 'HTML',
             'reply_markup' => json_encode($keyboard)
         ]);
 
@@ -69,46 +64,20 @@ class PaymentHandler
         $photos = $message->getPhoto();
         $text = $message->getText();
         
-        $this->logger->info("🔍 Handling payment proof - DETAILS", [
-            'user_id' => $user->id,
-            'state' => $userState,
-            'photos_type' => gettype($photos),
-            'photos_is_null' => $photos === null ? 'yes' : 'no',
-            'photos_is_empty' => empty($photos) ? 'yes' : 'no',
-            'photos_count' => is_countable($photos) ? count($photos) : 'not countable',
-            'text_type' => gettype($text),
-            'text_value' => $text,
-            'text_length' => $text ? strlen($text) : 0,
-        ]);
-        
         // التحقق من الحالة
         if (!in_array($userState, ['waiting_payment_proof', 'waiting_transaction_id'])) {
-            $this->logger->warning("Invalid state for payment proof", [
-                'user_id' => $user->id,
-                'state' => $userState
-            ]);
             return;
         }
         
         // الخطوة 1: استلام الصورة
         if ($userState === 'waiting_payment_proof') {
-            $this->logger->info("🎯 State: waiting_payment_proof - checking for photo", [
-                'user_id' => $user->id
-            ]);
+            
             
             // ✅ التحقق الصحيح: استخدام empty() بدلاً من is_array()
             if ($photos && !empty($photos)) {
                 $photoCount = is_countable($photos) ? count($photos) : 'unknown';
-                $this->logger->info("✅ Photo detected, processing...", [
-                    'user_id' => $user->id,
-                    'photos_count' => $photoCount
-                ]);
                 $this->handlePaymentImage($message, $user, $chatId);
             } else {
-                $this->logger->warning("❌ No valid photo in message", [
-                    'user_id' => $user->id,
-                    'photos' => $photos
-                ]);
                 $this->requestValidImage($chatId);
             }
             return;
@@ -116,23 +85,13 @@ class PaymentHandler
         
         // الخطوة 2: استلام رقم العملية
         if ($userState === 'waiting_transaction_id') {
-            $this->logger->info("🎯 State: waiting_transaction_id - checking for text", [
-                'user_id' => $user->id
-            ]);
             
             // التحقق من أن الرسالة نص فقط (بدون صورة)
             if ($text && empty($photos)) {
-                $this->logger->info("✅ Transaction ID detected, processing...", [
-                    'user_id' => $user->id,
-                    'text_length' => strlen($text)
-                ]);
+                
                 $this->handleTransactionId($message, $user, $chatId);
             } else {
-                $this->logger->warning("❌ Invalid input for transaction ID", [
-                    'user_id' => $user->id,
-                    'has_text' => $text ? 'yes' : 'no',
-                    'has_photo' => empty($photos) ? 'no' : 'yes'
-                ]);
+                
                 $this->requestValidTransactionId($chatId);
             }
             return;
@@ -149,9 +108,7 @@ class PaymentHandler
             
             // التحقق من وجود الصور
             if (empty($photos)) {
-                $this->logger->error("No photos found in handlePaymentImage", [
-                    'user_id' => $user->id
-                ]);
+                
                 $this->requestValidImage($chatId);
                 return;
             }
@@ -171,10 +128,6 @@ class PaymentHandler
             }
             
             if (!$paymentProof) {
-                $this->logger->error("Could not extract file_id from photo", [
-                    'user_id' => $user->id,
-                    'photo_type' => gettype($largestPhoto)
-                ]);
                 
                 Telegram::sendMessage([
                     'chat_id' => $chatId,
@@ -208,22 +161,15 @@ class PaymentHandler
                 'chat_id' => $chatId,
                 'text' =>
                     "✅ <b>تم استلام الصورة!</b>\n\n" .
-                    "📝 <b>الخطوة 2 من 2:</b> رقم العملية\n\n" .
-                    "الرجاء إرسال رقم العملية (Transaction ID)\n" .
-                    "مثال: TRX123456789",
+                    "📝 <b>الخطوة 2 من 2:</b> رقم معاملة  \n\n" .
+                    "الرجاء إرسال رقم العملية (Binance Order ID ) اذا ارسلت بريدي موب اكتب فقط ( بريديموب )\n" .
+                    "مثال: 397732846026694657 ",
                 'parse_mode' => 'HTML',
                 'reply_markup' => json_encode($keyboard)
             ]);
             
-            $this->logger->success("Step 2 message sent to user", ['user_id' => $user->id]);
             
         } catch (\Exception $e) {
-            $this->logger->error("Error in handlePaymentImage", [
-                'user_id' => $user->id,
-                'error' => $e->getMessage(),
-                'line' => $e->getLine(),
-                'trace' => $e->getTraceAsString()
-            ]);
             
             Telegram::sendMessage([
                 'chat_id' => $chatId,
@@ -254,52 +200,28 @@ class PaymentHandler
             return;
         }
         
-        $this->logger->info("Transaction ID received", [
-            'user_id' => $user->id,
-            'plan' => $planType,
-            'transaction_id' => $transactionId
-        ]);
         
         try {
             // إنشاء طلب التحقق
             $request = $this->createVerificationRequest($user, $planType, $paymentProof, $transactionId);
             
-            $this->logger->info("Verification request created with transaction ID", [
-                'request_id' => $request->id,
-                'user_id' => $user->id
-            ]);
             
             // مسح الحالة
             $this->clearUserCache($chatId);
-            $this->logger->info("Cache cleared after transaction ID", ['user_id' => $user->id]);
             
             // إرسال للأدمن (with error handling)
             try {
                 app(AdminNotificationService::class)->sendVerificationRequest($request);
-                $this->logger->info("Sent to admin", ['request_id' => $request->id]);
             } catch (\Exception $adminError) {
-                $this->logger->error("Failed to send to admin", [
-                    'request_id' => $request->id,
-                    'error' => $adminError->getMessage()
-                ]);
+                
                 // نستمر حتى لو فشل إرسال للأدمن
             }
             
             // تأكيد للمستخدم
             $this->sendConfirmationMessage($chatId, $request, $planType, $transactionId);
             
-            $this->logger->success("Transaction ID processed successfully", [
-                'request_id' => $request->id,
-                'user_id' => $user->id
-            ]);
             
         } catch (\Exception $e) {
-            $this->logger->error("Error in handleTransactionId", [
-                'user_id' => $user->id,
-                'error' => $e->getMessage(),
-                'line' => $e->getLine(),
-                'trace' => $e->getTraceAsString()
-            ]);
             
             Telegram::sendMessage([
                 'chat_id' => $chatId,
@@ -433,7 +355,6 @@ class PaymentHandler
      */
     public function cancelPayment($user, $chatId, $messageId, $callbackId)
     {
-        $this->logger->info("Payment cancelled", ['user_id' => $user->id]);
         
         // مسح الحالة
         $this->clearUserCache($chatId);

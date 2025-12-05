@@ -20,7 +20,6 @@ class UserInfoHandler
      */
     public function showStatus($user, $chatId)
     {
-        $this->logger->info("Showing status via command", ['user_id' => $user->id]);
         
         $subscription = $user->activeSubscription;
 
@@ -83,7 +82,6 @@ class UserInfoHandler
      */
     public function handleStartUsing($user, $chatId, $callbackId)
     {
-        $this->logger->info("Start using", ['user_id' => $user->id]);
         
         Telegram::sendMessage([
             'chat_id' => $chatId,
@@ -104,7 +102,7 @@ class UserInfoHandler
      */
     public function showHelp($chatId, $callbackId = null)
     {
-        $this->logger->info("Showing help");
+        
         
         Telegram::sendMessage([
             'chat_id' => $chatId,
@@ -133,37 +131,22 @@ class UserInfoHandler
      */
     public function showSubscriptionInfo($user, $chatId, $callbackId)
     {
-        $this->logger->info("Showing subscription info", ['user_id' => $user->id]);
         
         try {
             $subscription = $user->activeSubscription;
 
             if (!$subscription) {
-                $this->logger->warning("No active subscription found", ['user_id' => $user->id]);
                 $this->sendNoSubscriptionMessage($chatId, $callbackId);
                 return;
             }
 
-            $this->logger->info("Subscription found", [
-                'user_id' => $user->id,
-                'subscription_id' => $subscription->id,
-                'plan_type' => $subscription->plan_type
-            ]);
-
+            
             // بناء التفاصيل
             try {
                 $subscriptionDetails = $this->buildSubscriptionDetails($subscription);
                 
-                $this->logger->info("Subscription details built successfully", [
-                    'user_id' => $user->id,
-                    'details_length' => strlen($subscriptionDetails)
-                ]);
+                
             } catch (\Exception $buildError) {
-                $this->logger->error("Error building subscription details", [
-                    'user_id' => $user->id,
-                    'error' => $buildError->getMessage(),
-                    'line' => $buildError->getLine()
-                ]);
                 
                 // Fallback: رسالة بسيطة
                 $subscriptionDetails = $this->buildSimpleSubscriptionDetails($subscription);
@@ -177,14 +160,8 @@ class UserInfoHandler
                     'parse_mode' => 'HTML'
                 ]);
                 
-                $this->logger->success("Subscription info sent successfully", [
-                    'user_id' => $user->id
-                ]);
+                
             } catch (\Exception $sendError) {
-                $this->logger->error("Error sending message", [
-                    'user_id' => $user->id,
-                    'error' => $sendError->getMessage()
-                ]);
                 
                 // محاولة بدون HTML
                 Telegram::sendMessage([
@@ -196,13 +173,6 @@ class UserInfoHandler
             Telegram::answerCallbackQuery(['callback_query_id' => $callbackId]);
             
         } catch (\Exception $e) {
-            $this->logger->error("Error in showSubscriptionInfo", [
-                'user_id' => $user->id,
-                'error' => $e->getMessage(),
-                'line' => $e->getLine(),
-                'file' => $e->getFile(),
-                'trace' => $e->getTraceAsString()
-            ]);
             
             // رسالة خطأ للمستخدم
             Telegram::sendMessage([
@@ -257,60 +227,41 @@ class UserInfoHandler
     protected function buildSubscriptionDetails($subscription): string
     {
         // تسجيل بداية العملية
-        $this->logger->info("Building subscription details", [
-            'subscription_id' => $subscription->id
-        ]);
         
         try {
             // معالجة التواريخ بحذر
             $startsAt = $subscription->starts_at;
             $endsAt = $subscription->ends_at;
             
-            $this->logger->info("Dates retrieved", [
-                'starts_at_type' => gettype($startsAt),
-                'starts_at_value' => $startsAt,
-                'ends_at_type' => gettype($endsAt),
-                'ends_at_value' => $endsAt
-            ]);
             
             if (!$startsAt || !$endsAt) {
-                $this->logger->warning("Missing dates in subscription", [
-                    'subscription_id' => $subscription->id
-                ]);
+                
                 return $this->buildSimpleSubscriptionDetails($subscription);
             }
             
             // Convert to Carbon if needed
             if (!($startsAt instanceof \Carbon\Carbon)) {
-                $this->logger->info("Converting starts_at to Carbon");
                 $startsAt = \Carbon\Carbon::parse($startsAt);
             }
             
             if (!($endsAt instanceof \Carbon\Carbon)) {
-                $this->logger->info("Converting ends_at to Carbon");
                 $endsAt = \Carbon\Carbon::parse($endsAt);
             }
             
-            $this->logger->info("Calculating differences");
             
             $totalDays = $startsAt->diffInDays($endsAt);
-            $this->logger->info("Total days calculated", ['total_days' => $totalDays]);
             
             $passedDays = $startsAt->diffInDays(now());
-            $this->logger->info("Passed days calculated", ['passed_days' => $passedDays]);
             
             $remainingDays = now()->diffInDays($endsAt, false);
             $remainingDays = max(0, (int) ceil($remainingDays));
-            $this->logger->info("Remaining days calculated", ['remaining_days' => $remainingDays]);
             
             $progress = $totalDays > 0 ? ($passedDays / $totalDays) * 100 : 0;
             $progress = max(0, min(100, $progress)); // بين 0 و 100
             
-            $this->logger->info("Progress calculated", ['progress' => $progress]);
             
             // بناء شريط التقدم
             $progressBar = $this->buildProgressBar($progress);
-            $this->logger->info("Progress bar built");
             
             // تحديد حالة الاشتراك
             $statusEmoji = $subscription->is_trial ? '🎁' : '💎';
@@ -328,16 +279,10 @@ class UserInfoHandler
             $planName = $planNames[$subscription->plan_type] ?? $subscription->plan_type;
             
             // تنسيق التواريخ
-            $this->logger->info("Formatting dates");
             $startDate = $startsAt->format('Y-m-d H:i');
             $endDate = $endsAt->format('Y-m-d H:i');
-            $this->logger->info("Dates formatted", [
-                'start_date' => $startDate,
-                'end_date' => $endDate
-            ]);
             
             // بناء الرسالة
-            $this->logger->info("Building message");
             $message = "📊 <b>معلومات اشتراكك</b>\n" .
                    "━━━━━━━━━━━━━━━━━━\n\n" .
                    "{$statusEmoji} <b>النوع:</b> {$statusText}\n" .
@@ -353,20 +298,10 @@ class UserInfoHandler
                    "━━━━━━━━━━━━━━━━━━\n\n" .
                    $this->getSubscriptionWarning($remainingDays);
             
-            $this->logger->info("Message built successfully", [
-                'message_length' => strlen($message)
-            ]);
             
             return $message;
                    
         } catch (\Exception $e) {
-            $this->logger->error("Exception in buildSubscriptionDetails", [
-                'error' => $e->getMessage(),
-                'line' => $e->getLine(),
-                'file' => $e->getFile(),
-                'subscription_id' => $subscription->id ?? 'unknown',
-                'trace' => $e->getTraceAsString()
-            ]);
             
             // Fallback
             return $this->buildSimpleSubscriptionDetails($subscription);

@@ -20,7 +20,6 @@ class MenuHandler
      */
     public function backToStart($user, $chatId, $messageId, $callbackId)
     {
-        $this->logger->info("Back to start", ['user_id' => $user->id]);
         
         if ($user->hasActiveSubscription()) {
             $this->showActiveSubscriptionMenu($user, $chatId, $messageId);

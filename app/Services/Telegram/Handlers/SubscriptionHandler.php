@@ -48,7 +48,6 @@ class SubscriptionHandler
      */
     public function showPlans($chatId, $messageId, $callbackId)
     {
-        $this->logger->info("Showing subscription plans");
         
         $keyboard = $this->buildPlansKeyboard();
         $message = $this->buildPlansMessage();
@@ -70,10 +69,6 @@ class SubscriptionHandler
     {
         $planType = str_replace('select_plan_', '', $data);
         
-        $this->logger->info("Showing payment info", [
-            'user_id' => $user->id,
-            'plan' => $planType
-        ]);
         
         // التحقق من صحة الخطة
         if (!isset($this->plans[$planType])) {

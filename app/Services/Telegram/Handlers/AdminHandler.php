@@ -60,11 +60,7 @@ class AdminHandler
             return;
         }
         
-        $this->logger->info("Approving payment", [
-            'request_id' => $requestId,
-            'admin_id' => $adminId
-        ]);
-
+        
         // تحديث حالة الطلب
         $request->update([
             'status' => 'approved',
@@ -88,10 +84,7 @@ class AdminHandler
             'text' => '✅ تمت الموافقة',
         ]);
         
-        $this->logger->success("Payment approved", [
-            'request_id' => $requestId,
-            'subscription_id' => $subscription->id
-        ]);
+        
     }
     
     /**
@@ -115,11 +108,7 @@ class AdminHandler
             return;
         }
         
-        $this->logger->info("Rejecting payment", [
-            'request_id' => $requestId,
-            'admin_id' => $adminId
-        ]);
-
+        
         // تحديث حالة الطلب
         $request->update([
             'status' => 'rejected',
@@ -137,7 +126,6 @@ class AdminHandler
             'text' => '❌ تم الرفض',
         ]);
         
-        $this->logger->warning("Payment rejected", ['request_id' => $requestId]);
     }
     
     /**
