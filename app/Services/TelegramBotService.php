@@ -58,11 +58,6 @@ class TelegramBotService
             return;
         }
 
-        $this->logger->info("Handling callback", [
-            'data' => $data,
-            'user_id' => $user->id
-        ]);
-
         // توجيه الـ Callback للـ Handler المناسب
         match (true) {
             // ═══════════════════════════════════════
@@ -132,42 +127,27 @@ class TelegramBotService
         $user = User::where('telegram_id', $chatId)->first();
         
         if (!$user) {
-            $this->logger->warning("User not found in handleMessage", ['chat_id' => $chatId]);
-            return;
+           return;
         }
         
         // الحصول على حالة المستخدم
         $userState = cache()->get("user_state_{$chatId}");
         
-        $this->logger->info("Processing message", [
-            'user_id' => $user->id,
-            'chat_id' => $chatId,
-            'state' => $userState ?? 'null',
-            'has_photo' => $message->getPhoto() ? 'yes' : 'no',
-            'has_text' => $message->getText() ? 'yes' : 'no'
-        ]);
         
         // معالجة حسب الحالة
         switch ($userState) {
             case 'waiting_payment_proof':
-                $this->logger->info("Routing to PaymentHandler (waiting_payment_proof)", [
-                    'user_id' => $user->id
-                ]);
+                
                 $this->paymentHandler->handlePaymentProof($message, $user);
                 break;
                 
             case 'waiting_transaction_id':
-                $this->logger->info("Routing to PaymentHandler (waiting_transaction_id)", [
-                    'user_id' => $user->id
-                ]);
+                
                 $this->paymentHandler->handlePaymentProof($message, $user);
                 break;
                 
             default:
-                $this->logger->info("Routing to normal message handler", [
-                    'user_id' => $user->id,
-                    'state' => $userState ?? 'null'
-                ]);
+                
                 // معالجة الرسائل العادية (أوامر)
                 $this->handleNormalMessage($message, $user, $chatId);
         }
@@ -184,10 +164,6 @@ class TelegramBotService
         
         $text = $message->getText();
         
-        $this->logger->info("Normal message", [
-            'user_id' => $user->id,
-            'text' => $text
-        ]);
         
         // معالجة الأوامر
         match ($text) {
@@ -202,7 +178,6 @@ class TelegramBotService
      */
     protected function handleUnknownCallback($callbackId)
     {
-        $this->logger->warning("Unknown callback");
         
         Telegram::answerCallbackQuery([
             'callback_query_id' => $callbackId,
