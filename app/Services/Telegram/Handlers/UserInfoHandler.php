@@ -29,11 +29,12 @@ class UserInfoHandler
             return;
         }
 
+        // حساب الأيام المتبقية
         $daysLeft = now()->diffInDays($subscription->ends_at, false);
         $daysLeft = max(0, (int) ceil($daysLeft));
-        
+
         $statusEmoji = $subscription->is_trial ? '🎁' : '💎';
-        $statusText = $subscription->is_trial ? 'تجريبي' : 'مدفوع';
+        $statusText  = $subscription->is_trial ? 'تجريبي' : 'مدفوع';
         
         Telegram::sendMessage([
             'chat_id' => $chatId,
@@ -136,9 +137,6 @@ class UserInfoHandler
         $this->logger->info("Showing subscription info", ['user_id' => $user->id]);
         
         $subscription = $user->activeSubscription;
-        
-        $this->logger->info("details of subscription", ['details' => $subscription]);
-        
 
         if (!$subscription) {
             $this->sendNoSubscriptionMessage($chatId, $callbackId);
@@ -161,17 +159,16 @@ class UserInfoHandler
      */
     protected function buildSubscriptionDetails($subscription): string
     {
-        $totalDays = $subscription->starts_at->diffInDays($subscription->ends_at);
-        $passedDays = $subscription->starts_at->diffInDays(now());
+        $totalDays     = $subscription->starts_at->diffInDays($subscription->ends_at);
+        $passedDays    = $subscription->starts_at->diffInDays(now());
         $remainingDays = now()->diffInDays($subscription->ends_at, false);
+
         $progress = $totalDays > 0 ? ($passedDays / $totalDays) * 100 : 0;
         
-        // بناء شريط التقدم
         $progressBar = $this->buildProgressBar($progress);
-        
-        // تحديد حالة الاشتراك
+
         $statusEmoji = $subscription->is_trial ? '🎁' : '💎';
-        $statusText = $subscription->is_trial ? 'تجريبي' : 'مدفوع';
+        $statusText  = $subscription->is_trial ? 'تجريبي' : 'مدفوع';
         
         return "📊 <b>معلومات اشتراكك</b>\n" .
                "━━━━━━━━━━━━━━━━━━\n\n" .
@@ -195,7 +192,7 @@ class UserInfoHandler
     protected function buildProgressBar(float $progress): string
     {
         $filledBlocks = (int) round($progress / 10);
-        $emptyBlocks = 10 - $filledBlocks;
+        $emptyBlocks  = 10 - $filledBlocks;
         
         return str_repeat('▓', $filledBlocks) . str_repeat('░', $emptyBlocks);
     }
