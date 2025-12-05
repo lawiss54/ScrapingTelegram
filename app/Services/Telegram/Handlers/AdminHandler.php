@@ -53,17 +53,28 @@ class AdminHandler
         }
 
         $requestId = str_replace('approve_', '', $data);
-        $request = VerificationRequest::find($requestId);
-
-        // التحقق من صحة الطلب
-        if (!$this->isValidRequest($request, $callbackQuery->getId())) {
-            return;
-        }
         
         $this->logger->info("Approving payment", [
             'request_id' => $requestId,
             'admin_id' => $adminId
         ]);
+        
+        $request = VerificationRequest::find($requestId);
+        
+        $this->logger->info("Request loaded", [
+            'request_id' => $requestId,
+            'found' => $request ? 'yes' : 'no',
+            'status' => $request ? $request->status : 'null',
+            'user_id' => $request ? $request->user_id : 'null'
+        ]);
+
+        // التحقق من صحة الطلب
+        if (!$this->isValidRequest($request, $callbackQuery->getId())) {
+            $this->logger->warning("Invalid request - stopping execution", [
+                'request_id' => $requestId
+            ]);
+            return;
+        }
 
         try {
             // تحديث حالة الطلب
@@ -179,17 +190,28 @@ class AdminHandler
         }
 
         $requestId = str_replace('reject_', '', $data);
-        $request = VerificationRequest::find($requestId);
-
-        // التحقق من صحة الطلب
-        if (!$this->isValidRequest($request, $callbackQuery->getId())) {
-            return;
-        }
         
         $this->logger->info("Rejecting payment", [
             'request_id' => $requestId,
             'admin_id' => $adminId
         ]);
+        
+        $request = VerificationRequest::find($requestId);
+        
+        $this->logger->info("Request loaded", [
+            'request_id' => $requestId,
+            'found' => $request ? 'yes' : 'no',
+            'status' => $request ? $request->status : 'null',
+            'user_id' => $request ? $request->user_id : 'null'
+        ]);
+
+        // التحقق من صحة الطلب
+        if (!$this->isValidRequest($request, $callbackQuery->getId())) {
+            $this->logger->warning("Invalid request - stopping execution", [
+                'request_id' => $requestId
+            ]);
+            return;
+        }
 
         // تحديث حالة الطلب
         $request->update([
@@ -295,10 +317,35 @@ class AdminHandler
      */
     protected function isValidRequest(?VerificationRequest $request, $callbackId): bool
     {
-        if (!$request || $request->status !== 'pending') {
+        if (!$request) {
+            $this->logger->error("Request not found", ['request_id' => 'null']);
+            
             Telegram::answerCallbackQuery([
                 'callback_query_id' => $callbackId,
-                'text' => '⚠️ تمت المعالجة مسبقاً',
+                'text' => '⚠️ الطلب غير موجود',
+                'show_alert' => true,
+            ]);
+            return false;
+        }
+        
+        if ($request->status !== 'pending') {
+            $this->logger->warning("Request already processed", [
+                'request_id' => $request->id,
+                'current_status' => $request->status,
+                'reviewed_at' => $request->reviewed_at
+            ]);
+            
+            // رسالة توضيحية حسب الحالة
+            $statusMessages = [
+                'approved' => '✅ تمت الموافقة على هذا الطلب مسبقاً',
+                'rejected' => '❌ تم رفض هذا الطلب مسبقاً',
+            ];
+            
+            $message = $statusMessages[$request->status] ?? '⚠️ تمت معالجة هذا الطلب مسبقاً';
+            
+            Telegram::answerCallbackQuery([
+                'callback_query_id' => $callbackId,
+                'text' => $message,
                 'show_alert' => true,
             ]);
             return false;
