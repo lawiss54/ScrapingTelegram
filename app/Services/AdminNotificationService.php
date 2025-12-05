@@ -24,6 +24,10 @@ class AdminNotificationService
         }
 
         $user = $request->user;
+        $this->logger->info("user info", [
+            'user_info' => $user,
+            'admin_ids' => $adminIds,
+        ]);
         
         // تحضير معلومات الخطة
         $planNames = [
