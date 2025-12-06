@@ -14,5 +14,10 @@ class VerificationRequest extends Model
       'status',
       'admin_notes',
       'reviewed_at',
-    ]; 
+    ];
+    
+    public function user()
+    {
+        return $this->belongsTo(User::class);
+    }
 }

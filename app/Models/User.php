@@ -56,4 +56,9 @@ class User extends Authenticatable
     {
         return $this->activeSubscription()->first();
     }
+    
+    public function verificationRequests()
+    {
+        return $this->hasMany(VerificationRequest::class);
+    }
 }
